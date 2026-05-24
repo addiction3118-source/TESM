@@ -3,3 +3,6 @@
 temp_servers.json
 __pycache__/
 *.pyc
+.env
+.keys.enc
+temp_servers.json
