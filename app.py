@@ -1,11 +1,5 @@
 import streamlit as st
-import time
-import re
-import json
-import os
-import urllib.request
-import socket
-import ssl
+import time, re, json, os, urllib.request, urllib.error, socket, ssl
 import datetime as dt
 from datetime import datetime
 
@@ -15,765 +9,1262 @@ try:
 except ImportError:
     KEYS_STORE_AVAILABLE = False
 
-st.set_page_config(page_title="TESM", page_icon="🖥️", layout="wide")
+st.set_page_config(page_title="BlackArachnia", page_icon="🕷️",
+                   layout="wide", initial_sidebar_state="expanded")
 
+# ═══════════════════════════════════════════════════════════════
+#  ПУТИ + АВТОВХОД
+# ═══════════════════════════════════════════════════════════════
+_DIR          = os.path.dirname(os.path.abspath(__file__))
+_JSON_PATH    = os.path.join(_DIR, "temp_servers.json")
+_SESSION_FILE = os.path.join(_DIR, ".ba_session")
+
+import hashlib, base64 as _b64
+
+def _machine_key():
+    import platform, getpass
+    return hashlib.sha256(f"{platform.node()}-{getpass.getuser()}".encode()).digest()
+
+def save_session(pwd):
+    try:
+        key = _machine_key()
+        xored = bytes(p ^ key[i % 32] for i, p in enumerate(pwd.encode()))
+        with open(_SESSION_FILE, "wb") as f:
+            f.write(_b64.b64encode(xored))
+    except Exception:
+        pass
+
+def load_session():
+    try:
+        if not os.path.exists(_SESSION_FILE):
+            return ""
+        key = _machine_key()
+        with open(_SESSION_FILE, "rb") as f:
+            xored = _b64.b64decode(f.read())
+        return bytes(p ^ key[i % 32] for i, p in enumerate(xored)).decode("utf-8")
+    except Exception:
+        return ""
+
+def clear_session():
+    try:
+        if os.path.exists(_SESSION_FILE):
+            os.remove(_SESSION_FILE)
+    except Exception:
+        pass
+
+# ═══════════════════════════════════════════════════════════════
+#  CSS — единая тёмная тема (GitHub Dark / Netdata)
+# ═══════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-/* ── Базовый сброс ── */
-.stApp { background-color: #f8fafc !important; opacity: 1 !important; }
-.stApp * { transition: none !important; animation: none !important; }
-[data-testid="stStatusWidget"],[data-testid="stDecoration"],[data-testid="stToolbar"] { display: none !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Скрываем стандартный header ── */
-header[data-testid="stHeader"] { display: none !important; }
+*,*::before,*::after { box-sizing:border-box; }
+[data-testid="stStatusWidget"],[data-testid="stDecoration"],
+[data-testid="stToolbar"],header[data-testid="stHeader"],
+#MainMenu,footer { display:none!important; }
+.block-container { padding:0!important; max-width:100%!important; }
+[data-testid="stAppViewContainer"] { padding:0!important; }
 
-/* ── Убираем паддинг страницы ── */
-.block-container { padding: 0 !important; max-width: 100% !important; }
-[data-testid="stAppViewContainer"] { padding: 0 !important; }
+.stApp { background:#0d1117!important; color:#e6edf3!important;
+         font-family:'Inter',system-ui,sans-serif!important; }
 
-/* ── Сайдбар ── */
+/* Sidebar — статичный, не сворачивается */
 [data-testid="stSidebar"] {
-    background-color: #0f172a !important;
-    border-right: 0.5px solid #1e293b !important;
-    min-width: 240px !important;
-    max-width: 240px !important;
+    background:#161b22!important; border-right:1px solid #21262d!important;
+    min-width:225px!important; max-width:225px!important; transform:none!important;
 }
-[data-testid="stSidebar"] * { color: #94a3b8 !important; }
-[data-testid="stSidebar"] label { color: #64748b !important; font-size: 12px !important; }
+[data-testid="stSidebarCollapsedControl"] { display:none!important; }
+[data-testid="stSidebar"] * { color:#8b949e!important; font-size:12px!important; }
 [data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stTextArea textarea {
-    background: #1e293b !important;
-    border-color: #334155 !important;
-    color: #e2e8f0 !important;
-    font-size: 12px !important;
-}
+[data-testid="stSidebar"] .stTextArea textarea,
+[data-testid="stSidebar"] .stNumberInput input {
+    background:#0d1117!important; border:1px solid #30363d!important;
+    color:#e6edf3!important; font-size:12px!important; border-radius:6px!important; }
 [data-testid="stSidebar"] .stSelectbox > div > div {
-    background: #1e293b !important;
-    border-color: #334155 !important;
-    color: #e2e8f0 !important;
-}
+    background:#0d1117!important; border:1px solid #30363d!important;
+    color:#e6edf3!important; border-radius:6px!important; }
 [data-testid="stSidebar"] .stButton > button {
-    background: #1e293b !important;
-    border-color: #334155 !important;
-    color: #94a3b8 !important;
-    font-size: 12px !important;
-}
+    background:#21262d!important; border:1px solid #30363d!important;
+    color:#8b949e!important; border-radius:6px!important; width:100%!important; }
 [data-testid="stSidebar"] .stButton > button:hover {
-    border-color: #64748b !important;
-    color: #e2e8f0 !important;
-}
+    background:#30363d!important; color:#e6edf3!important; }
 [data-testid="stSidebar"] [data-testid="stExpander"] {
-    background: #1e293b !important;
-    border-color: #334155 !important;
-}
-[data-testid="stSidebar"] .stSuccess { background: #0a1f12 !important; }
+    background:#0d1117!important; border:1px solid #21262d!important; }
 
-/* ── Основной контент ── */
-.main .block-container { padding: 0 !important; }
-
-/* ── Метрики ── */
-[data-testid="stMetric"] {
-    background: #ffffff !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    padding: 16px !important;
-}
-[data-testid="stMetricLabel"] {
-    color: #94a3b8 !important;
-    font-size: 11px !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
-    font-family: system-ui !important;
-}
-[data-testid="stMetricValue"] {
-    color: #0f172a !important;
-    font-size: 22px !important;
-    font-weight: 500 !important;
-    font-family: system-ui !important;
-}
-[data-testid="stMetricDelta"] { font-size: 11px !important; }
-
-/* ── Кнопки ── */
-.stButton > button {
-    background: #ffffff !important;
-    color: #475569 !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-    font-size: 13px !important;
-    font-weight: 400 !important;
-}
-.stButton > button:hover { border-color: #94a3b8 !important; color: #0f172a !important; }
-
-/* ── Вкладки ── */
+/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
-    background: transparent !important;
-    border-bottom: 0.5px solid #e2e8f0 !important;
-    gap: 0 !important;
-    padding: 0 24px !important;
-}
+    background:#161b22!important; border-bottom:1px solid #21262d!important;
+    gap:0!important; padding:0 16px!important; }
 .stTabs [data-baseweb="tab"] {
-    background: transparent !important;
-    color: #94a3b8 !important;
-    font-size: 13px !important;
-    font-weight: 400 !important;
-    border-radius: 0 !important;
-    padding: 12px 20px !important;
-    border-bottom: 2px solid transparent !important;
-}
+    background:transparent!important; color:#8b949e!important;
+    font-size:12px!important; font-weight:500!important; padding:10px 14px!important;
+    border-radius:0!important; border-bottom:2px solid transparent!important;
+    letter-spacing:0.02em!important; text-transform:uppercase!important; }
 .stTabs [aria-selected="true"] {
-    color: #0f172a !important;
-    border-bottom: 2px solid #0f172a !important;
-    background: transparent !important;
-}
+    color:#58a6ff!important; border-bottom:2px solid #58a6ff!important;
+    background:transparent!important; }
 
-/* ── Датафрейм ── */
-[data-testid="stDataFrame"] {
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    overflow: hidden !important;
-}
+/* Метрики */
+[data-testid="stMetric"] {
+    background:#161b22!important; border:1px solid #21262d!important;
+    border-radius:8px!important; padding:14px 16px!important; }
+[data-testid="stMetricLabel"] { color:#8b949e!important; font-size:10px!important;
+    font-weight:500!important; letter-spacing:0.08em!important;
+    text-transform:uppercase!important; }
+[data-testid="stMetricValue"] { color:#e6edf3!important; font-size:20px!important;
+    font-weight:600!important; font-family:'JetBrains Mono',monospace!important; }
+[data-testid="stMetricDelta"] { font-size:11px!important; }
 
-/* ── Инпуты ── */
-.stTextArea textarea, .stTextInput input {
-    background: #ffffff !important;
-    color: #0f172a !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-    font-size: 13px !important;
-}
-.stTextArea textarea:focus, .stTextInput input:focus {
-    border-color: #0f172a !important;
-    box-shadow: none !important;
-}
+/* Кнопки */
+.stButton > button { background:#21262d!important; color:#8b949e!important;
+    border:1px solid #30363d!important; border-radius:6px!important;
+    font-size:12px!important; font-weight:500!important; transition:all .15s!important; }
+.stButton > button:hover { background:#30363d!important; color:#e6edf3!important;
+    border-color:#58a6ff!important; }
 
-/* ── Selectbox ── */
-.stSelectbox > div > div {
-    background: #ffffff !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-    color: #0f172a !important;
-    font-size: 13px !important;
-}
+/* Inputs */
+.stTextInput input,.stTextArea textarea {
+    background:#161b22!important; color:#e6edf3!important;
+    border:1px solid #30363d!important; border-radius:6px!important;
+    font-size:13px!important; }
+.stTextInput input:focus,.stTextArea textarea:focus {
+    border-color:#58a6ff!important; box-shadow:0 0 0 3px rgba(88,166,255,.1)!important; }
+.stSelectbox > div > div { background:#161b22!important; border:1px solid #30363d!important;
+    color:#e6edf3!important; border-radius:6px!important; font-size:13px!important; }
+.stNumberInput input { background:#161b22!important; color:#e6edf3!important;
+    border:1px solid #30363d!important; border-radius:6px!important; }
 
-/* ── Алерты ── */
-.stSuccess { background: #f0fdf4 !important; border-left: 3px solid #22c55e !important; border-radius: 8px !important; color: #166534 !important; }
-.stError   { background: #fef2f2 !important; border-left: 3px solid #ef4444 !important; border-radius: 8px !important; color: #991b1b !important; }
-.stInfo    { background: #eff6ff !important; border-left: 3px solid #3b82f6 !important; border-radius: 8px !important; color: #1e40af !important; }
-.stWarning { background: #fffbeb !important; border-left: 3px solid #f59e0b !important; border-radius: 8px !important; color: #92400e !important; }
-[data-testid="stAlert"] { font-size: 13px !important; }
+/* Alerts */
+.stSuccess { background:#0d2a1a!important; border:1px solid #238636!important;
+    border-radius:6px!important; color:#3fb950!important; }
+.stError { background:#2d0f0f!important; border:1px solid #da3633!important;
+    border-radius:6px!important; color:#ff7b72!important; }
+.stInfo { background:#0c2233!important; border:1px solid #388bfd!important;
+    border-radius:6px!important; color:#58a6ff!important; }
+.stWarning { background:#2a1f00!important; border:1px solid #d29922!important;
+    border-radius:6px!important; color:#e3b341!important; }
+[data-testid="stAlert"] { font-size:12px!important; }
 
-/* ── Expander ── */
-[data-testid="stExpander"] {
-    background: #ffffff !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-}
+/* Expander / DataFrame / Chat / Code */
+[data-testid="stExpander"] { background:#161b22!important;
+    border:1px solid #21262d!important; border-radius:8px!important; }
+[data-testid="stExpander"] summary { color:#8b949e!important; font-size:12px!important; }
+[data-testid="stDataFrame"] { border:1px solid #21262d!important;
+    border-radius:8px!important; overflow:hidden!important; background:#0d1117!important; }
+[data-testid="stDataFrame"] * { background:#0d1117!important; color:#c9d1d9!important; }
+[data-testid="stDataFrame"] th { background:#161b22!important; color:#8b949e!important;
+    font-size:11px!important; text-transform:uppercase!important; }
+[data-testid="stDataFrame"] td { background:#0d1117!important; color:#c9d1d9!important;
+    font-size:12px!important; font-family:'JetBrains Mono',monospace!important; }
+[data-testid="stChatInput"] { background:#161b22!important;
+    border:1px solid #30363d!important; border-radius:8px!important; }
+[data-testid="stChatInput"] textarea { background:#161b22!important; color:#e6edf3!important; }
+[data-testid="stChatMessage"] { background:#161b22!important;
+    border:1px solid #21262d!important; border-radius:8px!important; margin-bottom:6px!important; }
+[data-testid="stChatMessage"] p { color:#c9d1d9!important; font-size:13px!important; }
+.stCode,code,pre { background:#161b22!important; color:#e6edf3!important;
+    border:1px solid #21262d!important; border-radius:6px!important;
+    font-size:12px!important; font-family:'JetBrains Mono',monospace!important; }
+.stCaption { color:#6e7681!important; font-size:11px!important; }
+.stToggle label { color:#8b949e!important; font-size:12px!important; }
+hr { border-color:#21262d!important; }
 
-/* ── Чат ── */
-[data-testid="stChatInput"] {
-    background: #ffffff !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-}
-[data-testid="stChatInput"]:focus-within { border-color: #0f172a !important; }
-[data-testid="stChatMessage"] {
-    background: #ffffff !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    margin-bottom: 8px !important;
-}
-[data-testid="stChatMessage"] p { color: #374151 !important; font-size: 14px !important; }
+/* Прогресс-бар */
+.nd-bar-wrap { height:4px; background:#21262d; border-radius:2px; overflow:hidden; margin-top:3px; }
+.nd-bar-fill { height:100%; border-radius:2px; }
 
-/* ── Код ── */
-.stCode, code, pre {
-    background: #f8fafc !important;
-    color: #0f172a !important;
-    border: 0.5px solid #e2e8f0 !important;
-    border-radius: 8px !important;
-    font-size: 12px !important;
-}
+/* Sparkline */
+.spark-wrap { display:flex; align-items:flex-end; gap:1px; height:32px; }
+.spark-bar  { width:3px; border-radius:1px; min-height:1px; }
 
-/* ── Toggle ── */
-.stToggle label { color: #475569 !important; font-size: 13px !important; }
+/* Статус-dot */
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; }
+.dot-green  { background:#3fb950; box-shadow:0 0 6px #3fb950; }
+.dot-red    { background:#f85149; box-shadow:0 0 6px #f85149; }
+.dot-yellow { background:#e3b341; box-shadow:0 0 6px #e3b341; }
 
-/* ── Divider ── */
-hr { border-color: #e2e8f0 !important; }
+/* Uptime 90 дней */
+.upt-grid { display:flex; gap:2px; flex-wrap:wrap; margin:6px 0; }
+.upt-cell { width:10px; height:20px; border-radius:2px; }
 
-/* ── Caption ── */
-.stCaption { color: #94a3b8 !important; font-size: 11px !important; }
+/* Incident badge */
+.inc-badge { display:inline-block; padding:2px 8px; border-radius:12px;
+    font-size:10px; font-weight:600; letter-spacing:0.05em; }
+.inc-critical { background:#2d0f0f; color:#ff7b72; border:1px solid #f85149; }
+.inc-warning  { background:#2a1f00; color:#e3b341; border:1px solid #d29922; }
+.inc-ok       { background:#0d2a1a; color:#3fb950; border:1px solid #238636; }
 
-/* ── Прогресс-бар ── */
-.progress-track {
-    height: 5px;
-    background: #f1f5f9;
-    border-radius: 3px;
-    overflow: hidden;
-    margin-top: 4px;
-}
-.progress-fill { height: 100%; border-radius: 3px; }
+/* Карточка ресурса */
+.res-card { background:#161b22; border:1px solid #21262d; border-radius:8px; padding:12px 14px; }
+.res-label { font-size:10px; color:#6e7681; letter-spacing:0.08em; text-transform:uppercase; }
+.res-value { font-size:22px; font-weight:600; color:#e6edf3;
+    font-family:'JetBrains Mono',monospace; margin:4px 0; }
 
-/* ── Dark mode поддержка ── */
-@media (prefers-color-scheme: dark) {
-    .stApp { background-color: #0f172a !important; }
-    [data-testid="stMetric"] { background: #1e293b !important; border-color: #334155 !important; }
-    [data-testid="stMetricLabel"] { color: #64748b !important; }
-    [data-testid="stMetricValue"] { color: #f1f5f9 !important; }
-    .stTabs [data-baseweb="tab-list"] { border-color: #334155 !important; }
-    .stTabs [data-baseweb="tab"] { color: #64748b !important; }
-    .stTabs [aria-selected="true"] { color: #f1f5f9 !important; border-color: #f1f5f9 !important; }
-    .stButton > button { background: #1e293b !important; color: #94a3b8 !important; border-color: #334155 !important; }
-    .stButton > button:hover { color: #f1f5f9 !important; border-color: #64748b !important; }
-    .stTextArea textarea, .stTextInput input { background: #1e293b !important; color: #f1f5f9 !important; border-color: #334155 !important; }
-    .stSelectbox > div > div { background: #1e293b !important; border-color: #334155 !important; color: #f1f5f9 !important; }
-    [data-testid="stExpander"] { background: #1e293b !important; border-color: #334155 !important; }
-    [data-testid="stDataFrame"] { border-color: #334155 !important; }
-    [data-testid="stChatMessage"] { background: #1e293b !important; border-color: #334155 !important; }
-    [data-testid="stChatMessage"] p { color: #cbd5e1 !important; }
-    [data-testid="stChatInput"] { background: #1e293b !important; border-color: #334155 !important; }
-    [data-testid="stChatInput"]:focus-within { border-color: #94a3b8 !important; }
-    .stCode, code, pre { background: #1e293b !important; color: #f1f5f9 !important; border-color: #334155 !important; }
-    .progress-track { background: #334155; }
-    hr { border-color: #334155 !important; }
-}
+/* Дашборд-карточка сервера */
+.dash-card { background:#161b22; border:1px solid #21262d; border-radius:10px;
+    padding:14px 16px; margin-bottom:8px; }
+.dash-card.online  { border-left:3px solid #3fb950; }
+.dash-card.offline { border-left:3px solid #f85149; }
+.dash-card.pending { border-left:3px solid #e3b341; }
+
+/* Паутина */
+.spider-wrap { position:fixed; top:0; right:0; width:160px; height:160px;
+    pointer-events:none; z-index:9999; overflow:hidden; }
+@keyframes spider-drop { 0%{top:8px} 100%{top:100px} }
+.spider { position:absolute; font-size:16px; right:16px;
+    animation:spider-drop 4s ease-in-out infinite alternate; }
+.spider-thread { position:absolute; top:0; right:26px; width:1px;
+    background:linear-gradient(to bottom,#30363d,transparent); height:110px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── ПУТИ ────────────────────────────────────────────────────
-_DIR       = os.path.dirname(os.path.abspath(__file__))
-_ENV_PATH  = os.path.join(_DIR, ".env")
-_JSON_PATH = os.path.join(_DIR, "temp_servers.json")
+st.markdown("""
+<div class="spider-wrap">
+  <svg style="position:absolute;top:0;right:0;width:160px;height:160px" viewBox="0 0 160 160">
+    <line x1="160" y1="0" x2="0" y2="0" stroke="#30363d" stroke-width="0.5" opacity="0.5"/>
+    <line x1="160" y1="0" x2="160" y2="160" stroke="#30363d" stroke-width="0.5" opacity="0.5"/>
+    <line x1="160" y1="0" x2="30" y2="160" stroke="#30363d" stroke-width="0.4" opacity="0.3"/>
+    <path d="M130 0 Q160 0 160 30" stroke="#30363d" stroke-width="0.5" fill="none" opacity="0.4"/>
+    <path d="M90 0 Q160 0 160 70" stroke="#30363d" stroke-width="0.4" fill="none" opacity="0.3"/>
+  </svg>
+  <div class="spider-thread"></div>
+  <div class="spider">🕷️</div>
+</div>
+""", unsafe_allow_html=True)
 
-# ─── КЛЮЧИ ───────────────────────────────────────────────────
-def load_keys_from_env() -> dict:
-    """Загружает ключи только из переменных окружения — без записи в файл."""
-    return {
-        "groq":   os.getenv("GROQ_API_KEY",   ""),
-        "gemini": os.getenv("GEMINI_API_KEY",  ""),
-        "openai": os.getenv("OPENAI_API_KEY",  ""),
-    }
+# ═══════════════════════════════════════════════════════════════
+#  I18N
+# ═══════════════════════════════════════════════════════════════
+TR = {
+"ru": {
+ "monitoring":"МОНИТОРИНГ","auto_refresh":"Авто-обновление (3s)","environment":"ОКРУЖЕНИЕ",
+ "api_keys":"API КЛЮЧИ","agent_token":"ТОКЕН АГЕНТА","export":"ЭКСПОРТ","sysprompt":"СИСТЕМНЫЙ ПРОМПТ",
+ "save_keys":"Сохранить ключи","encrypt_save":"Зашифровать и сохранить","password":"Пароль",
+ "report_md":"📄 Отчёт .md","language":"ЯЗЫК","session":"СЕССИЯ","forget":"🚪 Забыть меня",
+ "tg_section":"TELEGRAM","tg_enable":"Включить алерты","tg_test":"🔔 Тест",
+ "tg_hint":"Токен у @BotFather, chat_id у @userinfobot. Напиши боту /start!",
+ "tg_cooldown":"Кулдаун (мин)",
+ "tab_dashboard":"Дашборд","tab_overview":"Сервер","tab_services":"Службы","tab_terminal":"Терминал",
+ "tab_ai":"ИИ Чат","tab_incidents":"Инциденты","tab_logs":"Логи","tab_add":"Добавить",
+ "status":"СТАТУС","uptime":"АПТАЙМ","http":"HTTP","ssl":"SSL","uptime90":"АПТАЙМ 90Д",
+ "resources":"РЕСУРСЫ","network":"СЕТЬ","top_proc":"ТОП ПРОЦЕССОВ","all_servers":"ВСЕ СЕРВЕРЫ",
+ "no_agent":"CPU/RAM — запусти agent.py на сервере","legend":"■ ≥99% · ■ ≥90% · ■ <90% · ■ нет данных",
+ "online":"Онлайн","offline":"Офлайн","pending":"Ожидание",
+ "console":"Консоль","snippets":"Сниппеты","audit":"Аудит","clear":"🗑 Очистить","run":"▶ Запуск",
+ "cmd_ph":"$ команда...","history":"История","dl_txt":"💾 .txt","add_snippet":"➕ Добавить сниппет",
+ "save":"Сохранить","name":"Название","command":"Команда",
+ "analyze":"🔍 Анализ","clear_chat":"🗑 Очистить","chat_ph":"Спроси о серверах...",
+ "chat_empty":"Начни диалог — ИИ знает состояние серверов и помнит контекст","send_term":"▶ В терминал",
+ "thinking":"Думаю...","q_cmd":"💡 Команда","q_report":"📊 Отчёт","q_sec":"🛡 Безопасность",
+ "inc_open":"Открытых","inc_crit":"Критичных","inc_warn":"Предупреждений","inc_total":"Всего",
+ "thresholds":"⚙️ Пороги","no_inc":"Нет инцидентов","resolve":"✓ Закрыть","clear_closed":"🗑 Закрытые",
+ "svc_title":"SYSTEMD СЛУЖБЫ","svc_refresh":"🔄 Обновить","log_stream":"СТРИМИНГ ЛОГОВ","log_get":"📡 Получить",
+ "add_title":"ДОБАВИТЬ СЕРВЕР","test_agent":"🔍 Тест агента","add_server":"＋ Добавить",
+ "cur_servers":"ТЕКУЩИЕ СЕРВЕРЫ","srv_name":"Имя","srv_host":"Хост / IP","agent_port":"Порт агента",
+ "filter_ph":"Фильтр...","total":"Всего","shown":"Показано",
+},
+"en": {
+ "monitoring":"MONITORING","auto_refresh":"Auto-refresh (3s)","environment":"ENVIRONMENT",
+ "api_keys":"API KEYS","agent_token":"AGENT TOKEN","export":"EXPORT","sysprompt":"SYSTEM PROMPT",
+ "save_keys":"Save keys","encrypt_save":"Encrypt & save","password":"Password",
+ "report_md":"📄 Report .md","language":"LANGUAGE","session":"SESSION","forget":"🚪 Forget me",
+ "tg_section":"TELEGRAM","tg_enable":"Enable alerts","tg_test":"🔔 Test",
+ "tg_hint":"Token from @BotFather, chat_id from @userinfobot. Send /start to bot!",
+ "tg_cooldown":"Cooldown (min)",
+ "tab_dashboard":"Dashboard","tab_overview":"Server","tab_services":"Services","tab_terminal":"Terminal",
+ "tab_ai":"AI Chat","tab_incidents":"Incidents","tab_logs":"Logs","tab_add":"Add",
+ "status":"STATUS","uptime":"UPTIME","http":"HTTP","ssl":"SSL","uptime90":"UPTIME 90D",
+ "resources":"RESOURCES","network":"NETWORK","top_proc":"TOP PROCESSES","all_servers":"ALL SERVERS",
+ "no_agent":"CPU/RAM — run agent.py on server","legend":"■ ≥99% · ■ ≥90% · ■ <90% · ■ no data",
+ "online":"Online","offline":"Offline","pending":"Pending",
+ "console":"Console","snippets":"Snippets","audit":"Audit","clear":"🗑 Clear","run":"▶ Run",
+ "cmd_ph":"$ command...","history":"History","dl_txt":"💾 .txt","add_snippet":"➕ Add snippet",
+ "save":"Save","name":"Name","command":"Command",
+ "analyze":"🔍 Analyze","clear_chat":"🗑 Clear","chat_ph":"Ask about servers...",
+ "chat_empty":"Start chatting — AI knows server state and remembers context","send_term":"▶ To terminal",
+ "thinking":"Thinking...","q_cmd":"💡 Command","q_report":"📊 Report","q_sec":"🛡 Security",
+ "inc_open":"Open","inc_crit":"Critical","inc_warn":"Warning","inc_total":"Total",
+ "thresholds":"⚙️ Thresholds","no_inc":"No incidents","resolve":"✓ Resolve","clear_closed":"🗑 Closed",
+ "svc_title":"SYSTEMD SERVICES","svc_refresh":"🔄 Refresh","log_stream":"LOG STREAMING","log_get":"📡 Fetch",
+ "add_title":"ADD SERVER","test_agent":"🔍 Test agent","add_server":"＋ Add",
+ "cur_servers":"CURRENT SERVERS","srv_name":"Name","srv_host":"Host / IP","agent_port":"Agent port",
+ "filter_ph":"Filter...","total":"Total","shown":"Shown",
+},
+}
 
-# ─── МОНИТОРИНГ ──────────────────────────────────────────────
-def is_valid_hostname(hostname):
-    if not hostname or not hostname.strip(): return False, "Адрес не может быть пустым!"
-    if not re.match(r"^[a-zA-Z0-9.\-]+$", hostname): return False, "Недопустимые символы!"
-    if not re.search(r"\.", hostname): return False, "Неполный домен."
-    return True, ""
+def T(k):
+    return TR.get(st.session_state.get("lang","ru"), TR["ru"]).get(k, k)
 
-def check_real_server(url):
-    hostname = url.replace("https://","").replace("http://","").split("/")[0]
-    try:
-        req = urllib.request.Request("https://"+hostname, headers={"User-Agent":"Mozilla/5.0"})
-        response = urllib.request.urlopen(req, timeout=3)
-        ssl_days = 0
-        try:
-            ctx = ssl.create_default_context()
-            with socket.create_connection((hostname, 443), timeout=2) as sock:
-                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    cert = ssock.getpeercert()
-                    exp = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
-                    ssl_days = (exp - datetime.now(dt.UTC).replace(tzinfo=None)).days
-        except Exception:
-            pass
-        return {"online":True,"status_code":response.getcode(),
-                "ip":socket.gethostbyname(hostname),"ssl_days":ssl_days,
-                "message":"OK","last_seen":datetime.now().strftime("%H:%M:%S")}
-    except Exception as e:
-        return {"online":False,"status_code":"—","ip":"—",
-                "ssl_days":0,"message":str(e),"last_seen":"—"}
+# ═══════════════════════════════════════════════════════════════
+#  HELPERS
+# ═══════════════════════════════════════════════════════════════
+def load_keys_from_env():
+    return {"groq":os.getenv("GROQ_API_KEY",""),"gemini":os.getenv("GEMINI_API_KEY",""),
+            "openai":os.getenv("OPENAI_API_KEY","")}
 
-def fetch_agent_metrics(hostname, port=9999):
-    try:
-        req = urllib.request.Request(f"http://{hostname}:{port}/metrics",
-                                     headers={"User-Agent":"TESM/1.0"})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return json.loads(r.read().decode())
-    except Exception:
-        return {}
+def is_valid_hostname(h):
+    if not h or not h.strip(): return False,"Адрес не может быть пустым"
+    if not re.match(r"^[a-zA-Z0-9.\-]+$", h): return False,"Недопустимые символы"
+    if not re.search(r"\.", h): return False,"Неполный домен"
+    return True,""
 
-def add_log(message):
+def fmt_uptime(s):
+    if s<60: return f"{int(s)}s"
+    if s<3600: return f"{int(s//60)}m {int(s%60)}s"
+    if s<86400: return f"{int(s//3600)}h {int((s%3600)//60)}m"
+    return f"{int(s//86400)}d {int((s%86400)//3600)}h"
+
+def add_log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
-    st.session_state.logs.append(f"[{ts}] {message}")
-    if len(st.session_state.logs) > 200:
-        st.session_state.logs = st.session_state.logs[-200:]
+    st.session_state.logs.append(f"[{ts}] {msg}")
+    if len(st.session_state.logs) > 300:
+        st.session_state.logs = st.session_state.logs[-300:]
 
-def format_uptime(s):
-    if s < 60:    return f"{int(s)}s"
-    elif s < 3600: return f"{int(s//60)}m {int(s%60)}s"
-    else:          return f"{int(s//3600)}h {int((s%3600)//60)}m"
+def add_audit(server, cmd, rc):
+    st.session_state.audit_log.append({"ts":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "server":server,"cmd":cmd,"rc":rc})
+    if len(st.session_state.audit_log) > 500:
+        st.session_state.audit_log = st.session_state.audit_log[-500:]
 
-def _refresh_servers():
-    for name, url in st.session_state.servers_dict.items():
-        r = check_real_server(url)
-        prev = st.session_state.server_cache.get(name, {})
+def _color(v):
+    return "#3fb950" if v<60 else "#e3b341" if v<85 else "#f85149"
+
+# ── Telegram ──────────────────────────────────────────────────
+def send_telegram(text, severity="info"):
+    token   = st.session_state.get("tg_token","").strip()
+    chat_id = st.session_state.get("tg_chat_id","").strip()
+    if not token or not chat_id:
+        return False, "не задан token или chat_id"
+    emoji = {"critical":"🔴","warning":"🟡","ok":"🟢","info":"ℹ️"}.get(severity,"ℹ️")
+    payload = json.dumps({"chat_id":chat_id,"text":f"{emoji} BlackArachnia\n{text}"}).encode()
+    try:
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage",
+            data=payload, headers={"Content-Type":"application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            resp = json.loads(r.read().decode())
+        if resp.get("ok"): return True, ""
+        return False, f"[{resp.get('error_code','')}] {resp.get('description','error')}"
+    except urllib.error.HTTPError as e:
+        try:
+            b = json.loads(e.read().decode())
+            return False, f"[{e.code}] {b.get('description', str(e))}"
+        except Exception:
+            return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, str(e)
+
+def tg_alert(key, server, severity, msg):
+    if not st.session_state.get("tg_enabled"): return
+    now  = time.time()
+    last = st.session_state.tg_last_sent.get(key, 0)
+    cd   = st.session_state.get("tg_cooldown_min", 15) * 60
+    if now - last < cd: return
+    ok, err = send_telegram(f"{server} — {msg}", severity)
+    if ok:
+        st.session_state.tg_last_sent[key] = now
+        add_log(f"[telegram] алерт: {server} — {msg[:40]}")
+    else:
+        add_log(f"[telegram] ошибка: {err}")
+
+# ── Инциденты ─────────────────────────────────────────────────
+def check_thresholds(name, s):
+    th  = st.session_state.thresholds.get(name, {"cpu":85,"ram":90,"disk":90})
+    inc = st.session_state.incidents
+    def _open(key, sev, msg):
+        for i in inc:
+            if i["server"]==name and i["key"]==key and i["status"]=="open": return
+        inc.append({"id":len(inc)+1,"server":name,"key":key,"severity":sev,"msg":msg,
+            "opened":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"closed":None,"status":"open"})
+        add_log(f"[incident] {sev.upper()} — {name}: {msg}")
+        tg_alert(f"{name}_{key}", name, sev, msg)
+    def _close(key):
+        for i in inc:
+            if i["server"]==name and i["key"]==key and i["status"]=="open":
+                i["status"]="closed"; i["closed"]=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not s.get("online"):
+        _open("offline","critical",f"Сервер недоступен: {s.get('message','')[:50]}"); return
+    _close("offline")
+    if s.get("cpu") is not None:
+        if s["cpu"]>=th["cpu"]: _open("cpu","critical" if s["cpu"]>=95 else "warning",f"CPU {s['cpu']:.0f}% ≥ {th['cpu']}%")
+        else: _close("cpu")
+    if s.get("ram") is not None:
+        if s["ram"]>=th["ram"]: _open("ram","critical" if s["ram"]>=95 else "warning",f"RAM {s['ram']:.0f}% ≥ {th['ram']}%")
+        else: _close("ram")
+    if s.get("disk") is not None:
+        if s["disk"]>=th["disk"]: _open("disk","critical" if s["disk"]>=95 else "warning",f"Disk {s['disk']:.0f}% ≥ {th['disk']}%")
+        else: _close("disk")
+    sd = s.get("ssl_days",999)
+    if sd<14: _open("ssl","critical",f"SSL истекает через {sd} дн.")
+    elif sd<30: _open("ssl","warning",f"SSL истекает через {sd} дн.")
+    else: _close("ssl")
+    if len(inc)>1000: st.session_state.incidents = inc[-1000:]
+
+# ── Uptime 90 дней ────────────────────────────────────────────
+def push_uptime(name, online):
+    today = datetime.now().strftime("%Y-%m-%d")
+    h = st.session_state.uptime_history.setdefault(name, {})
+    d = h.get(today, {"checks":0,"up":0})
+    d["checks"]+=1
+    if online: d["up"]+=1
+    h[today]=d
+
+def get_uptime_pct(name, days=90):
+    h = st.session_state.uptime_history.get(name, {})
+    total=up=0
+    cutoff=(datetime.now()-dt.timedelta(days=days)).strftime("%Y-%m-%d")
+    for day,v in h.items():
+        if day>=cutoff: total+=v["checks"]; up+=v["up"]
+    return (up/total*100) if total else None
+
+def uptime_grid(name, days=90):
+    h = st.session_state.uptime_history.get(name, {})
+    cells=[]
+    for i in range(days-1,-1,-1):
+        day=(datetime.now()-dt.timedelta(days=i)).strftime("%Y-%m-%d")
+        v=h.get(day)
+        if v is None: c="#21262d"; tip=f"{day}: нет данных"
+        else:
+            pct=v["up"]/v["checks"]*100 if v["checks"] else 0
+            c="#3fb950" if pct>=99 else "#e3b341" if pct>=90 else "#f85149"
+            tip=f"{day}: {pct:.1f}%"
+        cells.append(f'<div class="upt-cell" style="background:{c}" title="{tip}"></div>')
+    return '<div class="upt-grid">'+"".join(cells)+'</div>'
+
+# ── Метрики sparkline ─────────────────────────────────────────
+def push_metrics(name, cpu, ram, disk=None):
+    h = st.session_state.metrics_history.setdefault(name, {"cpu":[],"ram":[],"disk":[]})
+    for k,v in [("cpu",cpu),("ram",ram),("disk",disk)]:
+        if v is not None:
+            h[k].append(round(v,1)); h[k]=h[k][-60:]
+
+def sparkline(values, color="#58a6ff", h=32):
+    if not values: return '<span style="color:#6e7681;font-size:10px">—</span>'
+    mx=max(values) if max(values)>0 else 1
+    bars="".join(f'<div class="spark-bar" style="height:{max(1,int(v/mx*h))}px;background:{color}"></div>' for v in values[-40:])
+    last=values[-1]; col=_color(last)
+    return (f'<div style="display:flex;align-items:center;gap:8px"><div class="spark-wrap">{bars}</div>'
+            f'<span style="font-size:11px;font-weight:600;color:{col};font-family:JetBrains Mono">{last:.0f}%</span></div>')
+
+def bar(pct, color):
+    return f'<div class="nd-bar-wrap"><div class="nd-bar-fill" style="width:{min(pct,100):.0f}%;background:{color}"></div></div>'
+
+# ── Проверка сервера ──────────────────────────────────────────
+def check_server(url):
+    host = url.replace("https://","").replace("http://","").split("/")[0]
+    hdr  = {"User-Agent":"Mozilla/5.0"}
+    for scheme in ("https","http"):
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(f"{scheme}://{host}",headers=hdr), timeout=4)
+            ssl_days=0
+            if scheme=="https":
+                try:
+                    ctx=ssl.create_default_context()
+                    with socket.create_connection((host,443),timeout=2) as sk:
+                        with ctx.wrap_socket(sk,server_hostname=host) as ss:
+                            exp=datetime.strptime(ss.getpeercert()["notAfter"],"%b %d %H:%M:%S %Y %Z")
+                            ssl_days=(exp-datetime.now(dt.UTC).replace(tzinfo=None)).days
+                except Exception: pass
+            try: ip=socket.gethostbyname(host)
+            except Exception: ip="—"
+            return {"online":True,"status_code":r.getcode(),"ip":ip,"ssl_days":ssl_days,
+                    "message":"OK","last_seen":datetime.now().strftime("%H:%M:%S")}
+        except Exception: continue
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://{host}",headers=hdr),timeout=4)
+    except Exception as e: err=str(e)
+    else: err="недоступен"
+    return {"online":False,"status_code":"—","ip":"—","ssl_days":0,"message":err,"last_seen":"—"}
+
+def fetch_agent(host, port=9999, path="/metrics"):
+    try:
+        req=urllib.request.Request(f"http://{host}:{port}{path}",headers={"User-Agent":"BA/3"})
+        with urllib.request.urlopen(req,timeout=2) as r:
+            return json.loads(r.read().decode())
+    except Exception: return {}
+
+def exec_remote(host, cmd, port=9999, token=""):
+    try:
+        payload=json.dumps({"cmd":cmd,"token":token}).encode()
+        req=urllib.request.Request(f"http://{host}:{port}/exec",data=payload,
+            headers={"Content-Type":"application/json"},method="POST")
+        with urllib.request.urlopen(req,timeout=35) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try: return {"error":json.loads(e.read().decode()).get("error",str(e))}
+        except Exception: return {"error":f"HTTP {e.code}"}
+    except Exception as e: return {"error":str(e)}
+
+def refresh_servers():
+    for name,url in st.session_state.servers_dict.items():
+        r=check_server(url)
+        prev=st.session_state.server_cache.get(name,{})
         if r["online"] and not prev.get("online"):
-            st.session_state.uptime_start[name] = time.time()
+            st.session_state.uptime_start[name]=time.time()
         if not r["online"]:
-            st.session_state.uptime_start.pop(name, None)
+            st.session_state.uptime_start.pop(name,None)
         if r["online"]:
-            hostname = url.replace("https://","").replace("http://","").split("/")[0]
-            m = fetch_agent_metrics(hostname)
-            r["cpu"]  = m.get("cpu_percent")
-            r["ram"]  = m.get("ram_percent")
-            r["ram_used"]  = m.get("ram_used_gb")
-            r["ram_total"] = m.get("ram_total_gb")
-            r["disk"] = m.get("disk_percent")
-        st.session_state.server_cache[name] = r
-        add_log(f"[monitor] {name} — {'online' if r['online'] else 'offline'}, http={r['status_code']}")
+            host=url.replace("https://","").replace("http://","").split("/")[0]
+            port=st.session_state.agent_ports.get(name,9999)
+            m=fetch_agent(host,port)
+            r["cpu"]=m.get("cpu_percent"); r["ram"]=m.get("ram_percent")
+            r["ram_used"]=m.get("ram_used_gb"); r["ram_total"]=m.get("ram_total_gb")
+            r["disk"]=m.get("disk_percent"); r["disk_used"]=m.get("disk_used_gb")
+            r["disk_total"]=m.get("disk_total_gb")
+            r["net_up"]=m.get("net_up_kbps"); r["net_down"]=m.get("net_down_kbps")
+            r["cores"]=m.get("cpu_cores"); r["load"]=m.get("load_avg")
+        st.session_state.server_cache[name]=r
+        push_metrics(name,r.get("cpu"),r.get("ram"),r.get("disk"))
+        push_uptime(name,r["online"])
+        check_thresholds(name,r)
 
-# ─── LLM РОУТЕР ──────────────────────────────────────────────
-TASK_PATTERNS = {
-    "code":        [r"\bкод\b",r"\b(python|javascript|sql|bash|html)\b",r"\b(функци|класс|debug|баг)\b"],
-    "reasoning":   [r"\b(почему|объясни|проанализир|сравни|стратег)\b"],
-    "translation": [r"\b(переведи|translate|перевод)\b"],
-    "summary":     [r"\b(сократи|резюмир|summarize)\b"],
-    "simple":      [r"\b(привет|что такое|расскаж)\b"],
-}
-ROUTING_MAP = {
-    "code":         ("groq",  "mixtral-8x7b-32768",      "Groq / Mixtral"),
-    "reasoning":    ("groq",  "llama-3.3-70b-versatile", "Groq / Llama 70B"),
-    "long_context": ("gemini","gemini-2.0-flash",         "Gemini Flash"),
-    "translation":  ("groq",  "llama-3.1-8b-instant",    "Groq / Llama 8B"),
-    "summary":      ("groq",  "llama-3.1-8b-instant",    "Groq / Llama 8B"),
-    "simple":       ("groq",  "llama-3.1-8b-instant",    "Groq / Llama 8B"),
-    "general":      ("groq",  "llama-3.3-70b-versatile", "Groq / Llama 70B"),
+# ═══════════════════════════════════════════════════════════════
+#  LLM-РОУТЕР (с памятью диалога)
+# ═══════════════════════════════════════════════════════════════
+ROUTING = {
+ "code":("groq","mixtral-8x7b-32768","Groq/Mixtral"),
+ "reasoning":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
+ "long":("gemini","gemini-2.0-flash","Gemini Flash"),
+ "general":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
 }
 
-def classify_prompt(prompt):
-    if len(prompt) > 16000: return "long_context"
-    for task, patterns in TASK_PATTERNS.items():
-        for p in patterns:
-            if re.search(p, prompt.lower(), re.IGNORECASE): return task
+def classify(p):
+    if len(p)>16000: return "long"
+    if re.search(r"\b(код|code|python|sql|bash|функци|class)\b",p,re.I): return "code"
+    if re.search(r"\b(почему|объясни|why|analyze|проанализир|сравни)\b",p,re.I): return "reasoning"
     return "general"
 
-def call_groq(prompt, model, key, system):
-    from groq import Groq
-    r = Groq(api_key=key).chat.completions.create(
-        model=model, max_tokens=4096,
-        messages=[{"role":"system","content":system},{"role":"user","content":prompt}])
-    return r.choices[0].message.content, r.usage.prompt_tokens, r.usage.completion_tokens
-
-def call_gemini(prompt, model, key, system):
-    import google.generativeai as genai
-    genai.configure(api_key=key)
-    r = genai.GenerativeModel(model, system_instruction=system).generate_content(prompt)
-    return r.text, len(prompt)//4, len(r.text)//4
-
-def call_openai(prompt, model, key, system):
-    from openai import OpenAI
-    r = OpenAI(api_key=key).chat.completions.create(
-        model=model, max_tokens=4096,
-        messages=[{"role":"system","content":system},{"role":"user","content":prompt}])
-    return r.choices[0].message.content, r.usage.prompt_tokens, r.usage.completion_tokens
-
-def build_server_context():
-    cache = st.session_state.get("server_cache", {})
+def build_context():
+    cache=st.session_state.get("server_cache",{})
     if not cache: return ""
-    lines = ["ТЕКУЩЕЕ СОСТОЯНИЕ СЕРВЕРОВ:"]
-    for name, s in cache.items():
-        url = st.session_state.servers_dict.get(name, "")
-        up = time.time() - st.session_state.uptime_start.get(name, time.time())
+    lines=["СОСТОЯНИЕ СЕРВЕРОВ:"]
+    for name,s in cache.items():
+        url=st.session_state.servers_dict.get(name,"")
         if s["online"]:
-            warn = " SSL ИСТЕКАЕТ!" if s["ssl_days"] < 30 else ""
-            cpu_info = f" | CPU {s['cpu']:.0f}% | RAM {s['ram']:.0f}%" if s.get("cpu") is not None else ""
-            lines.append(f"- {name} ({url}): ОНЛАЙН | HTTP {s['status_code']} | IP {s['ip']} | SSL {s['ssl_days']} дн.{warn} | uptime {format_uptime(up)}{cpu_info}")
+            ci=f" CPU={s['cpu']:.0f}% RAM={s['ram']:.0f}% Disk={s.get('disk',0):.0f}%" if s.get("cpu") is not None else ""
+            w=" SSL ИСТЕКАЕТ!" if s.get("ssl_days",999)<30 else ""
+            lines.append(f"- {name}({url}): ОНЛАЙН http={s['status_code']} ip={s['ip']} ssl={s['ssl_days']}д{w}{ci}")
         else:
-            lines.append(f"- {name} ({url}): ОФЛАЙН | ошибка: {s['message']}")
+            lines.append(f"- {name}({url}): ОФЛАЙН {s['message'][:40]}")
+    op=[i for i in st.session_state.incidents if i["status"]=="open"]
+    if op:
+        lines.append(f"\nИНЦИДЕНТЫ ({len(op)}):")
+        for i in op[:5]: lines.append(f"  [{i['severity'].upper()}] {i['server']}: {i['msg']}")
     return "\n".join(lines)
 
-def route_and_call(prompt, mode):
-    keys = st.session_state.get("api_keys", {})
-    if mode == "auto":
-        task = classify_prompt(prompt)
-        provider, model, label = ROUTING_MAP[task]
-    else:
-        provider = mode
-        if provider == "groq":
-            task = classify_prompt(prompt)
-            model = ROUTING_MAP.get(task, ROUTING_MAP["general"])[1]
-            label = f"Groq / {model}"
-        elif provider == "gemini": model,label,task = "gemini-2.0-flash","Gemini Flash","general"
-        elif provider == "openai": model,label,task = "gpt-4o-mini","GPT-4o mini","general"
-        else: return {"error": f"Неизвестный провайдер: {provider}"}
-    key = keys.get(provider, "")
-    if not key:
-        return {"error": f"Ключ {provider.upper()}_API_KEY не задан — добавь в sidebar и сохрани"}
-    base = st.session_state.get("system_prompt", "You are a helpful assistant.")
-    ctx = build_server_context()
-    system = (base+"\n\n"+ctx+"\n\nЕсли спрашивают о серверах — используй данные выше. "
-              "Если сервер офлайн — предложи шаги диагностики. Отвечай на русском.") if ctx else base
-    try:
-        t0 = time.time()
-        if provider == "groq":   text,inp,out = call_groq(prompt,model,key,system)
-        elif provider == "gemini": text,inp,out = call_gemini(prompt,model,key,system)
-        elif provider == "openai": text,inp,out = call_openai(prompt,model,key,system)
-        return {"text":text,"label":label,"task":task,
-                "inp":inp,"out":out,"latency":int((time.time()-t0)*1000),"error":""}
-    except Exception as e:
-        return {"error": f"Ошибка API: {e}"}
+def _msgs(sys, prompt, history):
+    m=[{"role":"system","content":sys}]
+    for h in history[-10:]:
+        if h.get("role") in ("user","assistant") and h.get("content"):
+            m.append({"role":h["role"],"content":h["content"]})
+    m.append({"role":"user","content":prompt})
+    return m
 
-# ─── ИНИЦИАЛИЗАЦИЯ ────────────────────────────────────────────
-# ─── ЭКРАН ВХОДА / ПАРОЛЬ ────────────────────────────────────
-if "keys_unlocked" not in st.session_state:
-    st.session_state.keys_unlocked = False
-if "api_keys" not in st.session_state:
-    st.session_state.api_keys = load_keys_from_env()
+def route_and_call(prompt, mode, use_history=True):
+    keys=st.session_state.get("api_keys",{})
+    if mode=="auto":
+        task=classify(prompt); provider,model,label=ROUTING[task]
+    else:
+        provider=mode
+        if provider=="groq": task=classify(prompt); model=ROUTING.get(task,ROUTING["general"])[1]; label=f"Groq/{model[:14]}"
+        elif provider=="gemini": model,label,task="gemini-2.0-flash","Gemini Flash","general"
+        elif provider=="openai": model,label,task="gpt-4o-mini","GPT-4o mini","general"
+        else: return {"error":f"Неизвестный провайдер {provider}"}
+    key=keys.get(provider,"")
+    if not key: return {"error":f"Ключ {provider.upper()} не задан"}
+    base=st.session_state.get("system_prompt","You are a helpful assistant.")
+    ctx=build_context()
+    system=(base+"\n\n"+ctx+"\n\nИспользуй данные о серверах. Отвечай на русском.") if ctx else base
+    history=st.session_state.get("chat_messages",[]) if use_history else []
+    try:
+        t0=time.time()
+        if provider=="groq":
+            from groq import Groq
+            r=Groq(api_key=key).chat.completions.create(model=model,max_tokens=4096,messages=_msgs(system,prompt,history))
+            text=r.choices[0].message.content; inp,out=r.usage.prompt_tokens,r.usage.completion_tokens
+        elif provider=="gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=key)
+            gm=genai.GenerativeModel(model,system_instruction=system)
+            gh=[{"role":"model" if h["role"]=="assistant" else "user","parts":[h["content"]]}
+                for h in history[-10:] if h.get("content")]
+            chat=gm.start_chat(history=gh); r=chat.send_message(prompt)
+            text=r.text; inp,out=len(prompt)//4,len(text)//4
+        elif provider=="openai":
+            from openai import OpenAI
+            r=OpenAI(api_key=key).chat.completions.create(model=model,max_tokens=4096,messages=_msgs(system,prompt,history))
+            text=r.choices[0].message.content; inp,out=r.usage.prompt_tokens,r.usage.completion_tokens
+        return {"text":text,"label":label,"task":task,"inp":inp,"out":out,
+                "latency":int((time.time()-t0)*1000),"error":""}
+    except Exception as e:
+        return {"error":f"API: {e}"}
+
+def build_report():
+    now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    L=[f"# BlackArachnia Report",f"**{now}**",""]
+    for name,url in st.session_state.servers_dict.items():
+        s=st.session_state.server_cache.get(name); upt=get_uptime_pct(name)
+        L.append(f"## {name} — {url}")
+        if not s: L.append("*Не проверялся*\n"); continue
+        L.append(f"- Статус: {'🟢 Online' if s['online'] else '🔴 Offline'}")
+        L.append(f"- HTTP {s.get('status_code','—')} | IP {s.get('ip','—')} | SSL {s.get('ssl_days','—')}д")
+        if upt is not None: L.append(f"- Uptime 90д: {upt:.2f}%")
+        if s.get("cpu") is not None:
+            L.append(f"- CPU {s['cpu']:.0f}% | RAM {s['ram']:.0f}% | Disk {s.get('disk',0):.0f}%")
+        L.append("")
+    op=[i for i in st.session_state.incidents if i["status"]=="open"]
+    if op:
+        L.append(f"## Активные инциденты ({len(op)})")
+        for i in op: L.append(f"- [{i['severity'].upper()}] {i['server']}: {i['msg']} ({i['opened']})")
+    return "\n".join(L)
+
+# ═══════════════════════════════════════════════════════════════
+#  ЭКРАН ВХОДА
+# ═══════════════════════════════════════════════════════════════
+if "keys_unlocked" not in st.session_state: st.session_state.keys_unlocked=False
+if "api_keys" not in st.session_state: st.session_state.api_keys=load_keys_from_env()
 
 if KEYS_STORE_AVAILABLE and not st.session_state.keys_unlocked:
     if keys_file_exists():
-        # Файл с ключами есть — просим пароль
-        st.markdown("""
-        <div style="max-width:360px;margin:80px auto;padding:32px;background:#1e293b;
-                    border-radius:16px;border:0.5px solid #334155;text-align:center">
-            <div style="font-size:18px;font-weight:500;color:#f1f5f9;margin-bottom:4px">TESM</div>
-            <div style="font-size:12px;color:#64748b;margin-bottom:24px">Введи пароль для расшифровки ключей</div>
-        </div>
-        """, unsafe_allow_html=True)
-        col_c = st.columns([1,2,1])[1]
-        with col_c:
-            pwd = st.text_input("Пароль:", type="password", key="unlock_pwd",
-                                placeholder="Введи пароль...")
-            if st.button("Войти", width="stretch", key="btn_unlock"):
-                loaded = load_keys(pwd)
-                if loaded is not None:
-                    st.session_state.api_keys = loaded
-                    st.session_state.keys_unlocked = True
-                    st.rerun()
-                else:
-                    st.error("Неверный пароль")
-            if st.button("Войти без ключей", width="stretch", key="btn_skip"):
-                st.session_state.keys_unlocked = True
+        sp=load_session()
+        if sp:
+            loaded=load_keys(sp)
+            if loaded is not None:
+                st.session_state.api_keys=loaded
+                st.session_state.keys_unlocked=True
                 st.rerun()
+            else:
+                clear_session()
+        st.markdown("""<div style="max-width:360px;margin:80px auto;padding:32px;
+            background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center">
+            <div style="font-size:28px;margin-bottom:8px">🕷️</div>
+            <div style="font-size:16px;font-weight:600;color:#e6edf3">BlackArachnia</div>
+            <div style="font-size:12px;color:#6e7681;margin-top:4px">Введи пароль для расшифровки ключей</div>
+            </div>""", unsafe_allow_html=True)
+        _,cc,_=st.columns([1,2,1])
+        with cc:
+            pwd=st.text_input("",type="password",key="unlock_pwd",placeholder="Пароль...")
+            remember=st.checkbox("Запомнить меня на этом устройстве",value=True,key="chk_remember")
+            if st.button("Войти",key="btn_unlock",use_container_width=True):
+                loaded=load_keys(pwd)
+                if loaded is not None:
+                    st.session_state.api_keys=loaded
+                    st.session_state.keys_unlocked=True
+                    if remember: save_session(pwd)
+                    st.rerun()
+                else: st.error("Неверный пароль")
+            if st.button("Войти без ключей",key="btn_skip",use_container_width=True):
+                st.session_state.keys_unlocked=True; st.rerun()
         st.stop()
     else:
-        # Файла нет — сразу пускаем
-        st.session_state.keys_unlocked = True
+        st.session_state.keys_unlocked=True
 
+# ═══════════════════════════════════════════════════════════════
+#  SESSION STATE
+# ═══════════════════════════════════════════════════════════════
 if "servers_dict" not in st.session_state:
     if os.path.exists(_JSON_PATH):
-        with open(_JSON_PATH, encoding="utf-8") as f:
-            loaded = json.load(f)
-        st.session_state.servers_dict = loaded if loaded else {"ЛАТ": "luat.ru"}
+        with open(_JSON_PATH,encoding="utf-8") as f: loaded=json.load(f)
+        st.session_state.servers_dict=loaded if loaded else {"ЛАТ":"luat.ru"}
     else:
-        st.session_state.servers_dict = {"ЛАТ": "luat.ru"}
+        st.session_state.servers_dict={"ЛАТ":"luat.ru"}
 
-if "logs"              not in st.session_state: st.session_state.logs = ["[info] система готова."]
-if "last_refresh"      not in st.session_state: st.session_state.last_refresh = 0.0
-if "monitoring_active" not in st.session_state: st.session_state.monitoring_active = True
-if "server_cache"      not in st.session_state: st.session_state.server_cache = {}
-if "uptime_start"      not in st.session_state: st.session_state.uptime_start = {}
-if "chat_messages"     not in st.session_state: st.session_state.chat_messages = []
-if "system_prompt"     not in st.session_state: st.session_state.system_prompt = "You are a helpful assistant."
-if "api_keys"          not in st.session_state: st.session_state.api_keys = load_keys_from_env()
+for k,v in [
+    ("logs",["[info] BlackArachnia v3 запущен."]),("server_cache",{}),("uptime_start",{}),
+    ("chat_messages",[]),("agent_token",""),("agent_ports",{}),("term_history",[]),
+    ("term_cmd_history",[]),("audit_log",[]),("metrics_history",{}),("uptime_history",{}),
+    ("incidents",[]),("thresholds",{}),("monitoring_active",True),("lang","ru"),
+    ("tg_token",""),("tg_chat_id",""),("tg_enabled",False),("tg_cooldown_min",15),("tg_last_sent",{}),
+    ("system_prompt","Ты — ассистент мониторинга серверов BlackArachnia. Помогай кратко и по делу."),
+    ("term_snippets",[
+        {"name":"Disk","cmd":"df -h"},{"name":"Memory","cmd":"free -h"},
+        {"name":"Top CPU","cmd":"ps aux --sort=-%cpu | head -12"},
+        {"name":"Ports","cmd":"ss -tlnp"},{"name":"Nginx","cmd":"systemctl status nginx --no-pager -l"},
+        {"name":"Docker","cmd":"docker ps"},{"name":"Journal","cmd":"journalctl -n 40 --no-pager"},
+    ]),
+]:
+    if k not in st.session_state: st.session_state[k]=v
 
-REFRESH_INTERVAL = 3
+# ═══════════════════════════════════════════════════════════════
+#  SIDEBAR
+# ═══════════════════════════════════════════════════════════════
+def _sb_label(txt, top=False):
+    border = "border-top:1px solid #21262d;padding-top:10px;" if top else ""
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:10px 0 4px;{border}">{txt}</div>', unsafe_allow_html=True)
 
-# ─── SIDEBAR ─────────────────────────────────────────────────
 with st.sidebar:
-    # Логотип
-    st.markdown("""
-    <div style="padding:16px 0 12px;text-align:center;border-bottom:0.5px solid #1e293b;margin-bottom:8px">
-        <div style="font-size:11px;font-weight:600;color:#f1f5f9;letter-spacing:0.1em">TESM</div>
-        <div style="font-size:9px;color:#334155;margin-top:2px">v2.0</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div style="padding:14px 0 10px;text-align:center;border-bottom:1px solid #21262d;margin-bottom:10px">
+      <div style="font-size:17px;font-weight:700;color:#e6edf3">🕷️ BlackArachnia</div>
+      <div style="font-size:10px;color:#6e7681;margin-top:2px">SERVER MONITOR v3</div></div>""", unsafe_allow_html=True)
 
-    # Авто-обновление
-    st.markdown('<div style="font-size:10px;color:#475569;letter-spacing:0.08em;margin-bottom:4px">МОНИТОРИНГ</div>', unsafe_allow_html=True)
-    mon = st.toggle("Авто-обновление", value=st.session_state.monitoring_active, key="mon_toggle")
-    if mon != st.session_state.monitoring_active:
-        st.session_state.monitoring_active = mon
-        st.rerun()
+    _sb_label("ЯЗЫК / LANGUAGE")
+    lc1,lc2=st.columns(2)
+    if lc1.button("🇷🇺 RU",key="lang_ru",use_container_width=True): st.session_state.lang="ru"; st.rerun()
+    if lc2.button("🇬🇧 EN",key="lang_en",use_container_width=True): st.session_state.lang="en"; st.rerun()
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    _sb_label(T("monitoring"),top=True)
+    st.toggle(T("auto_refresh"),value=st.session_state.monitoring_active,key="mon_toggle",
+              on_change=lambda: st.session_state.update(monitoring_active=st.session_state.mon_toggle))
 
-    # Статус ключей
-    st.markdown('<div style="font-size:10px;color:#475569;letter-spacing:0.08em;margin:12px 0 6px">API КЛЮЧИ</div>', unsafe_allow_html=True)
-    st.markdown('<div style="font-size:10px;color:#334155;padding:0 2px 8px">Ключи хранятся только в сессии браузера и не сохраняются на сервере</div>', unsafe_allow_html=True)
+    open_inc=[i for i in st.session_state.incidents if i["status"]=="open"]
+    if open_inc:
+        c=sum(1 for i in open_inc if i["severity"]=="critical"); w=len(open_inc)-c
+        parts=[]
+        if c: parts.append(f'<span style="color:#f85149">⬤ {c}</span>')
+        if w: parts.append(f'<span style="color:#e3b341">⬤ {w}</span>')
+        st.markdown(f'<div style="font-size:11px;margin:4px 0 8px;padding:6px 8px;background:#1a1f27;border-radius:6px;border:1px solid #21262d">Инциденты: {" ".join(parts)}</div>',unsafe_allow_html=True)
 
-    for _p, _l in [("groq","Groq"),("gemini","Gemini"),("openai","OpenAI")]:
-        _cur = st.session_state.api_keys.get(_p, "")
-        _color = "#22c55e" if _cur else "#ef4444"
-        _hint = "задан" if _cur else "не задан"
-        st.markdown(
-            f"<div style='display:flex;align-items:center;justify-content:space-between;padding:3px 2px'>"
-            f"<div style='display:flex;align-items:center;gap:6px'>"
-            f"<div style='width:6px;height:6px;border-radius:50%;background:{_color};flex-shrink:0'></div>"
-            f"<span style='font-size:12px;color:#94a3b8'>{_l}</span></div>"
-            f"<span style='font-size:10px;color:#475569'>{_hint}</span></div>",
-            unsafe_allow_html=True
-        )
+    _sb_label(T("environment"),top=True)
+    env_list=list(st.session_state.servers_dict.keys())
+    env_choice=st.selectbox("",env_list,key="main_select",label_visibility="collapsed")
+    server_url=st.session_state.servers_dict.get(env_choice,"")
 
-    with st.expander("Ввести / сохранить ключи"):
-        for _p, _l in [("groq","GROQ"),("gemini","GEMINI"),("openai","OPENAI")]:
-            _new = st.text_input(
-                f"{_l}_API_KEY:",
-                value=st.session_state.api_keys.get(_p, ""),
-                type="password",
-                key=f"key_input_{_p}",
-                placeholder=f"Вставь {_l}_API_KEY..."
-            )
-            if _new != st.session_state.api_keys.get(_p, ""):
-                st.session_state.api_keys[_p] = _new
+    _sb_label(T("api_keys"),top=True)
+    for _p,_l in [("groq","Groq"),("gemini","Gemini"),("openai","OpenAI")]:
+        _cur=st.session_state.api_keys.get(_p,"")
+        _col="#3fb950" if _cur else "#f85149"
+        st.markdown(f'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="font-size:11px;color:#8b949e">{_l}</span><span style="font-size:9px;color:{_col}">{"●" if _cur else "○"}</span></div>',unsafe_allow_html=True)
+        _new=st.text_input("",value=_cur,type="password",key=f"key_{_p}",label_visibility="collapsed",placeholder=f"{_l} key")
+        if _new!=_cur: st.session_state.api_keys[_p]=_new
 
-        if KEYS_STORE_AVAILABLE:
-            st.caption("Сохранить зашифрованными на диск:")
-            _pwd = st.text_input("Пароль для шифрования:", type="password",
-                                 key="save_pwd", placeholder="Придумай пароль...")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Сохранить", key="btn_save_keys", width="stretch"):
-                    if _pwd:
-                        save_keys(st.session_state.api_keys, _pwd)
-                        st.success("Сохранено!")
-                    else:
-                        st.error("Введи пароль")
-            with col2:
-                if st.button("Удалить файл", key="btn_del_keys",
-                             width="stretch", type="secondary"):
-                    delete_keys()
-                    st.success("Удалено")
-        else:
-            st.caption("Ключи хранятся только до закрытия вкладки")
+    if KEYS_STORE_AVAILABLE:
+        with st.expander(f"🔐 {T('save_keys')}"):
+            _pw=st.text_input(T("password"),type="password",key="save_pwd")
+            if st.button(T("encrypt_save"),key="btn_save_keys"):
+                if _pw and save_keys(st.session_state.api_keys,_pw): st.success("OK")
+                elif not _pw: st.warning("Введи пароль")
 
-    # Выбор окружения
-    st.markdown('<div style="font-size:10px;color:#475569;letter-spacing:0.08em;margin:12px 0 4px;border-top:0.5px solid #1e293b;padding-top:12px">ОКРУЖЕНИЕ</div>', unsafe_allow_html=True)
-    env_choice = st.selectbox("", list(st.session_state.servers_dict.keys()),
-                               key="main_select", label_visibility="collapsed")
-    server_url = st.session_state.servers_dict[env_choice]
+    _sb_label(T("agent_token"),top=True)
+    _tok=st.text_input("",value=st.session_state.agent_token,type="password",key="tok_input",label_visibility="collapsed",placeholder="--token")
+    if _tok!=st.session_state.agent_token: st.session_state.agent_token=_tok
 
-    with st.expander("Управление серверами"):
-        n_name = st.text_input("Имя:", key="add_name")
-        n_link = st.text_input("Домен:", key="add_link")
-        if st.button("Добавить", key="btn_add", width="stretch"):
-            is_ok, err = is_valid_hostname(n_link)
-            if not n_name.strip(): st.error("Имя пусто!")
-            elif n_name in st.session_state.servers_dict: st.error("Уже есть!")
-            elif is_ok:
-                st.session_state.servers_dict[n_name] = n_link
-                add_log(f"[config] добавлен: {n_name} → {n_link}")
-                st.rerun()
-            else: st.error(err)
-        if st.button("Удалить текущий", key="btn_del", type="secondary"):
-            if len(st.session_state.servers_dict) > 1:
-                del st.session_state.servers_dict[env_choice]
-                st.session_state.server_cache.pop(env_choice, None)
-                st.session_state.uptime_start.pop(env_choice, None)
-                add_log(f"[config] удалён: {env_choice}")
-                st.rerun()
-            else: st.warning("Последний сервер!")
+    _sb_label(T("tg_section"),top=True)
+    st.toggle(T("tg_enable"),value=st.session_state.tg_enabled,key="tg_toggle",
+              on_change=lambda: st.session_state.update(tg_enabled=st.session_state.tg_toggle))
+    if st.session_state.tg_enabled:
+        _tt=st.text_input("Bot Token",value=st.session_state.tg_token,type="password",key="tg_tok")
+        if _tt!=st.session_state.tg_token: st.session_state.tg_token=_tt
+        _tc=st.text_input("Chat ID",value=st.session_state.tg_chat_id,key="tg_chat")
+        if _tc!=st.session_state.tg_chat_id: st.session_state.tg_chat_id=_tc
+        _cd=st.number_input(T("tg_cooldown"),1,1440,st.session_state.tg_cooldown_min,key="tg_cd")
+        if _cd!=st.session_state.tg_cooldown_min: st.session_state.tg_cooldown_min=int(_cd)
+        if st.button(T("tg_test"),key="btn_tg_test",use_container_width=True):
+            ok,err=send_telegram(f"Тест — {datetime.now().strftime('%H:%M:%S')}\nСерверов: {len(st.session_state.servers_dict)}","info")
+            if ok: st.success("✅ Отправлено!")
+            else: st.error(f"❌ {err}")
+        st.caption(T("tg_hint"))
 
-    # System prompt
-    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    st.markdown('<div style="font-size:10px;color:#475569;letter-spacing:0.08em;margin:12px 0 4px;border-top:0.5px solid #1e293b;padding-top:12px">СИСТЕМНЫЙ ПРОМПТ</div>', unsafe_allow_html=True)
-    st.session_state.system_prompt = st.text_area(
-        "", value=st.session_state.system_prompt,
-        height=70, label_visibility="collapsed", placeholder="Инструкция для ИИ...")
+    _sb_label(T("export"),top=True)
+    st.download_button(T("report_md"),data=build_report().encode(),
+        file_name=f"ba_{datetime.now().strftime('%Y%m%d_%H%M')}.md",mime="text/markdown",
+        use_container_width=True,key="dl_report")
 
-# ─── ЗАГОЛОВОК ───────────────────────────────────────────────
-st.markdown(f"""
-<div style="padding:20px 24px 0;display:flex;align-items:center;justify-content:space-between">
-    <div>
-        <div style="font-size:18px;font-weight:500;color:#0f172a">Server Management</div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:2px">{env_choice} · {server_url} · {datetime.now().strftime('%Y-%m-%d')}</div>
-    </div>
-    <div style="font-size:11px;color:#cbd5e1;background:#f1f5f9;padding:4px 12px;border-radius:20px;border:0.5px solid #e2e8f0">
-        {'● live' if st.session_state.monitoring_active else '○ paused'}
-    </div>
-</div>
-<hr style="margin:16px 24px 0;border-color:#e2e8f0">
-""", unsafe_allow_html=True)
+    _sb_label(T("sysprompt"),top=True)
+    st.session_state.system_prompt=st.text_area("",value=st.session_state.system_prompt,height=60,label_visibility="collapsed")
 
-# ─── ВКЛАДКИ ─────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["Monitor", "Manage", "AI Chat", "Logs"])
+    if os.path.exists(_SESSION_FILE):
+        _sb_label(T("session"),top=True)
+        if st.button(T("forget"),key="btn_forget",use_container_width=True):
+            clear_session(); st.success("Сессия удалена")
 
-# ══ ФОНОВОЕ ОБНОВЛЕНИЕ ═══════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+#  HEADER
+# ═══════════════════════════════════════════════════════════════
+_c=sum(1 for i in open_inc if i["severity"]=="critical")
+_w=sum(1 for i in open_inc if i["severity"]=="warning")
+_badges=""
+if _c: _badges+=f'<span class="inc-badge inc-critical">{_c} CRIT</span> '
+if _w: _badges+=f'<span class="inc-badge inc-warning">{_w} WARN</span>'
+st.markdown(f"""<div style="background:#161b22;border-bottom:1px solid #21262d;padding:10px 20px;display:flex;align-items:center;justify-content:space-between">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span style="font-size:13px;font-weight:600;color:#e6edf3">🕷️ BlackArachnia</span>
+    <span style="font-size:11px;color:#6e7681">{env_choice} · {server_url}</span> {_badges}</div>
+  <span style="font-size:11px;color:#6e7681">{datetime.now().strftime('%Y-%m-%d %H:%M')}</span></div>""", unsafe_allow_html=True)
+
+tabs=st.tabs([T("tab_dashboard"),T("tab_overview"),T("tab_services"),T("tab_terminal"),
+              T("tab_ai"),T("tab_incidents"),T("tab_logs"),T("tab_add")])
+tab_dash,tab_ov,tab_svc,tab_term,tab_ai,tab_inc,tab_logs,tab_add=tabs
+
+# ═══════════════════════════════════════════════════════════════
+#  FRAGMENTS
+# ═══════════════════════════════════════════════════════════════
 @st.fragment(run_every=3)
-def _background_refresh():
-    if st.session_state.get("monitoring_active", True):
-        prev = str(st.session_state.server_cache)
-        _refresh_servers()
-        if str(st.session_state.server_cache) != prev:
-            st.session_state["_data_updated"] = time.time()
+def frag_live(): refresh_servers(); render_dashboard()
+@st.fragment(run_every=None)
+def frag_paused(): render_dashboard()
 
-def render_monitor():
-    env = st.session_state.get("main_select", list(st.session_state.servers_dict.keys())[0])
-    url = st.session_state.servers_dict.get(env, "")
-    status = st.session_state.server_cache.get(env)
-    if status is None:
-        with st.spinner("Подключаемся..."):
-            result = check_real_server(url)
-            if result["online"]: st.session_state.uptime_start[env] = time.time()
-            st.session_state.server_cache[env] = result
-            status = result
+@st.fragment(run_every=3)
+def frag_ov_live(): refresh_servers(); render_overview()
+@st.fragment(run_every=None)
+def frag_ov_paused(): render_overview()
 
-    up = time.time() - st.session_state.uptime_start.get(env, time.time())
+# ── ДАШБОРД (все серверы сразу, фишка Grafana) ───────────────
+def render_dashboard():
+    servers=st.session_state.servers_dict
+    online=sum(1 for n in servers if st.session_state.server_cache.get(n,{}).get("online"))
+    total=len(servers)
+    op=[i for i in st.session_state.incidents if i["status"]=="open"]
 
-    # Метрики
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Uptime", format_uptime(up) if status["online"] else "—")
-    ssl_d = ("⚠ скоро" if status["ssl_days"] < 30 else "✓ ok") if status["online"] else None
-    col2.metric("SSL", f"{status['ssl_days']} дн." if status["online"] else "—", delta=ssl_d)
-    col3.metric("Last seen", status.get("last_seen","—"))
-    col4.metric("HTTP", str(status["status_code"]))
+    m1,m2,m3,m4=st.columns(4)
+    m1.metric("Серверов",str(total))
+    m2.metric("Онлайн",f"{online}/{total}")
+    m3.metric("Инцидентов",str(len(op)))
+    avg_cpu=[st.session_state.server_cache.get(n,{}).get("cpu") for n in servers]
+    avg_cpu=[c for c in avg_cpu if c is not None]
+    m4.metric("Ср. CPU",f"{sum(avg_cpu)/len(avg_cpu):.0f}%" if avg_cpu else "—")
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>",unsafe_allow_html=True)
 
-    if status["online"]:
-        st.success(f"Online · {env} · {status['ip']}")
-    else:
-        st.error(f"Offline · {status['message']}")
-
-    # CPU/RAM блок
-    if status["online"] and status.get("cpu") is not None:
-        st.markdown("---")
-        st.markdown("**Системные ресурсы**")
-        r1, r2, r3 = st.columns(3)
-        cpu  = status.get("cpu", 0)
-        ram  = status.get("ram", 0)
-        disk = status.get("disk", 0)
-        cpu_c  = "#22c55e" if cpu  < 60 else "#f59e0b" if cpu  < 85 else "#ef4444"
-        ram_c  = "#22c55e" if ram  < 60 else "#f59e0b" if ram  < 85 else "#ef4444"
-        disk_c = "#22c55e" if disk < 60 else "#f59e0b" if disk < 85 else "#ef4444"
-
-        with r1:
-            st.metric("CPU", f"{cpu:.1f}%")
-            st.markdown(f'<div class="progress-track"><div class="progress-fill" style="width:{cpu}%;background:{cpu_c}"></div></div>', unsafe_allow_html=True)
-        with r2:
-            ram_gb = f"{status.get('ram_used',0):.1f}/{status.get('ram_total',0):.1f} GB"
-            st.metric("RAM", ram_gb, delta=f"{ram:.0f}%")
-            st.markdown(f'<div class="progress-track"><div class="progress-fill" style="width:{ram}%;background:{ram_c}"></div></div>', unsafe_allow_html=True)
-        with r3:
-            st.metric("Disk", f"{disk:.1f}%")
-            st.markdown(f'<div class="progress-track"><div class="progress-fill" style="width:{disk}%;background:{disk_c}"></div></div>', unsafe_allow_html=True)
-    elif status["online"]:
-        st.caption("CPU/RAM недоступны — запусти agent.py на сервере")
-
-    # Таблица всех серверов
-    st.markdown("---")
-    st.markdown("**Все серверы**")
-    rows = []
-    for name, srv_url in st.session_state.servers_dict.items():
-        s = st.session_state.server_cache.get(name)
-        up_s = time.time() - st.session_state.uptime_start.get(name, time.time())
-        if s:
-            rows.append({
-                "Среда": name, "Хост": srv_url,
-                "Статус": "Online" if s["online"] else "Offline",
-                "Uptime": format_uptime(up_s) if s["online"] else "—",
-                "CPU": f"{s['cpu']:.0f}%" if s.get("cpu") is not None else "—",
-                "RAM": f"{s['ram']:.0f}%" if s.get("ram") is not None else "—",
-                "SSL": s["ssl_days"] if s["online"] else "—",
-                "Last seen": s.get("last_seen","—"),
-                "HTTP": str(s["status_code"]),
-            })
-        else:
-            rows.append({"Среда":name,"Хост":srv_url,"Статус":"Pending",
-                         "Uptime":"—","CPU":"—","RAM":"—","SSL":"—","Last seen":"—","HTTP":"—"})
-    st.dataframe(rows, width="stretch", hide_index=True,
-        column_config={c: st.column_config.TextColumn(c, disabled=True)
-                       for c in ["Среда","Хост","Статус","Uptime","CPU","RAM","SSL","Last seen","HTTP"]})
-
-# ══ ВКЛАДКА 1 ════════════════════════════════════════════════
-with tab1:
-    st.markdown("<div style='padding:20px 0 0'>", unsafe_allow_html=True)
-    _background_refresh()
-    render_monitor()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ══ ВКЛАДКА 2 ════════════════════════════════════════════════
-with tab2:
-    st.markdown(f"**{env_choice}** · `{server_url}`")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Действия**")
-        if st.button("Перезапустить службы", width="stretch", key="btn_restart"):
-            with st.spinner("Перезапуск..."): time.sleep(1)
-            add_log(f"[action] перезапуск: {env_choice}")
-            st.success("Готово")
-        if st.button("Очистить кэш", width="stretch", key="btn_cache"):
-            with st.spinner("Очистка..."): time.sleep(0.5)
-            add_log(f"[action] кэш очищен: {env_choice}")
-            st.info("Готово")
-        if st.button("Проверить сейчас", width="stretch", key="btn_check"):
-            with st.spinner("Проверяем..."):
-                result = check_real_server(server_url)
-                if result["online"] and env_choice not in st.session_state.uptime_start:
-                    st.session_state.uptime_start[env_choice] = time.time()
-                st.session_state.server_cache[env_choice] = result
-            add_log(f"[manual] {env_choice}: {'online' if result['online'] else 'offline'}")
-            st.rerun()
-    with col_b:
-        st.markdown("**Заметки**")
-        nk = f"notes_{env_choice}"
-        if nk not in st.session_state: st.session_state[nk] = ""
-        note = st.text_area("", value=st.session_state[nk], height=140,
-                            label_visibility="collapsed",
-                            placeholder="Заметки к серверу...")
-        if st.button("Сохранить", width="stretch", key="btn_note"):
-            st.session_state[nk] = note
-            add_log(f"[note] заметка обновлена: {env_choice}")
-            st.success("Сохранено")
-
-
-# ══ ВКЛАДКА 3 ════════════════════════════════════════════════
-with tab3:
-    col_mode, col_clear = st.columns([3, 1])
-    with col_mode:
-        chat_mode = st.selectbox("", ["auto","groq","gemini","openai"],
-            format_func=lambda x: {
-                "auto":   "Авто-роутер",
-                "groq":   "Groq — бесплатно",
-                "gemini": "Gemini Flash — бесплатно",
-                "openai": "GPT-4o mini",
-            }[x], label_visibility="collapsed")
-    with col_clear:
-        if st.button("Очистить чат", width="stretch", key="clear_chat"):
-            st.session_state.chat_messages = []
-            st.rerun()
-
-    if not st.session_state.chat_messages:
-        st.markdown("""
-        <div style="text-align:center;padding:40px 0;color:#94a3b8;font-size:13px">
-            Начни диалог — ИИ знает о состоянии твоих серверов
-        </div>
-        """, unsafe_allow_html=True)
-
-    for msg in st.session_state.chat_messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if msg.get("meta"):
-                st.caption(msg["meta"])
-
-    if user_input := st.chat_input("Задай вопрос..."):
-        st.session_state.chat_messages.append({"role":"user","content":user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        with st.chat_message("assistant"):
-            with st.spinner("Думаю..."):
-                result = route_and_call(user_input, chat_mode)
-            if result.get("error"):
-                st.error(result["error"])
-                st.session_state.chat_messages.append({"role":"assistant","content":result["error"]})
+    # Карточки серверов
+    for name,url in servers.items():
+        s=st.session_state.server_cache.get(name)
+        cls="pending" if not s else ("online" if s["online"] else "offline")
+        dot="dot-yellow" if not s else ("dot-green" if s["online"] else "dot-red")
+        if s and s["online"]:
+            cpu=s.get("cpu"); ram=s.get("ram"); disk=s.get("disk")
+            up=s.get("net_up",0); down=s.get("net_down",0)
+            metr=""
+            if cpu is not None:
+                metr=(f'<div style="display:flex;gap:18px;margin-top:8px;font-family:JetBrains Mono;font-size:12px">'
+                      f'<span style="color:{_color(cpu)}">CPU {cpu:.0f}%</span>'
+                      f'<span style="color:{_color(ram)}">RAM {ram:.0f}%</span>'
+                      f'<span style="color:{_color(disk or 0)}">Disk {disk or 0:.0f}%</span>'
+                      f'<span style="color:#58a6ff">↑{up:.0f} ↓{down:.0f} КБ/с</span></div>')
             else:
-                st.markdown(result["text"])
-                meta = f"{result['label']} · {result['task']} · {result['latency']}ms · {result['inp']}↑ {result['out']}↓ tok"
-                st.caption(meta)
-                st.session_state.chat_messages.append({
-                    "role":"assistant","content":result["text"],"meta":meta})
+                metr='<div style="font-size:11px;color:#6e7681;margin-top:6px">агент не подключён</div>'
+            extra=f'http {s["status_code"]} · {s["ip"]} · SSL {s["ssl_days"]}д'
+        else:
+            metr=""; extra=s["message"][:50] if s else "ожидание проверки"
+        st.markdown(f"""<div class="dash-card {cls}">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div><span class="dot {dot}"></span><b style="color:#e6edf3;font-size:14px">{name}</b>
+              <span style="color:#6e7681;font-size:12px;margin-left:8px">{url}</span></div>
+            <span style="font-size:11px;color:#6e7681">{extra}</span></div>
+          {metr}</div>""", unsafe_allow_html=True)
 
-# ══ ВКЛАДКА 4 ════════════════════════════════════════════════
-with tab4:
-    col_l1, col_l2 = st.columns([3, 1])
-    with col_l1:
-        filter_text = st.text_input("", placeholder="Поиск по логу...",
-                                    label_visibility="collapsed")
-    with col_l2:
-        if st.button("Очистить", width="stretch", key="clear_logs"):
-            st.session_state.logs = ["[info] лог очищен."]
+    st.caption(f"{'🟢 авто-обновление 3с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
+
+# ── ОБЗОР одного сервера ──────────────────────────────────────
+def render_overview():
+    env=st.session_state.get("main_select",list(st.session_state.servers_dict.keys())[0])
+    url=st.session_state.servers_dict.get(env,"")
+    s=st.session_state.server_cache.get(env)
+    if s is None:
+        with st.spinner("Подключение..."):
+            s=check_server(url)
+            if s["online"]: st.session_state.uptime_start[env]=time.time()
+            st.session_state.server_cache[env]=s
+            push_uptime(env,s["online"]); check_thresholds(env,s)
+    up=time.time()-st.session_state.uptime_start.get(env,time.time())
+    h=st.session_state.metrics_history.get(env,{"cpu":[],"ram":[],"disk":[]})
+    upt=get_uptime_pct(env)
+
+    m1,m2,m3,m4,m5=st.columns(5)
+    m1.metric(T("status"),T("online").upper() if s["online"] else T("offline").upper())
+    m2.metric(T("uptime"),fmt_uptime(up) if s["online"] else "—")
+    m3.metric(T("http"),str(s["status_code"]))
+    m4.metric(T("ssl"),f"{s['ssl_days']}d" if s["online"] else "—",delta="⚠ скоро" if s.get("ssl_days",999)<30 else None)
+    m5.metric(T("uptime90"),f"{upt:.1f}%" if upt is not None else "—")
+
+    st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
+    if s["online"]:
+        st.markdown(f'<div style="padding:8px 14px;background:#0d2a1a;border:1px solid #238636;border-radius:6px;font-size:12px;color:#3fb950"><span class="dot dot-green"></span><b>{env}</b> {T("online").lower()} · {s["ip"]} · {s["last_seen"]}</div>',unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div style="padding:8px 14px;background:#2d0f0f;border:1px solid #da3633;border-radius:6px;font-size:12px;color:#ff7b72"><span class="dot dot-red"></span><b>{env}</b> {T("offline").lower()} · {s["message"][:70]}</div>',unsafe_allow_html=True)
+
+    pv=f"{upt:.2f}%" if upt is not None else "нет данных"
+    st.markdown(f'<div style="font-size:11px;color:#6e7681;margin:12px 0 4px">UPTIME 90 DAYS — {pv}</div>',unsafe_allow_html=True)
+    st.markdown(uptime_grid(env),unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;margin-bottom:12px">{T("legend")}</div>',unsafe_allow_html=True)
+
+    if s["online"] and s.get("cpu") is not None:
+        st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("resources")}</div>',unsafe_allow_html=True)
+        r1,r2,r3=st.columns(3)
+        cpu=s.get("cpu",0); ram=s.get("ram",0); disk=s.get("disk",0)
+        with r1:
+            st.markdown(f'<div class="res-card"><div class="res-label">CPU · {s.get("cores","?")} cores</div><div class="res-value">{cpu:.1f}%</div>{bar(cpu,_color(cpu))}<div style="margin-top:8px">{sparkline(h["cpu"],_color(cpu))}</div></div>',unsafe_allow_html=True)
+        with r2:
+            rg=f'{s.get("ram_used",0):.1f}/{s.get("ram_total",0):.1f}GB'
+            st.markdown(f'<div class="res-card"><div class="res-label">RAM</div><div class="res-value">{ram:.1f}%</div><div style="font-size:10px;color:#6e7681">{rg}</div>{bar(ram,_color(ram))}<div style="margin-top:8px">{sparkline(h["ram"],_color(ram))}</div></div>',unsafe_allow_html=True)
+        with r3:
+            dg=f'{s.get("disk_used",0):.0f}/{s.get("disk_total",0):.0f}GB'
+            st.markdown(f'<div class="res-card"><div class="res-label">DISK</div><div class="res-value">{disk:.1f}%</div><div style="font-size:10px;color:#6e7681">{dg}</div>{bar(disk,_color(disk))}<div style="margin-top:8px">{sparkline(h["disk"],_color(disk))}</div></div>',unsafe_allow_html=True)
+
+        # Сеть + load average
+        st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px">{T("network")}</div>',unsafe_allow_html=True)
+        n1,n2,n3=st.columns(3)
+        n1.metric("↑ Upload",f"{s.get('net_up',0):.1f} КБ/с")
+        n2.metric("↓ Download",f"{s.get('net_down',0):.1f} КБ/с")
+        la=s.get("load",[0,0,0])
+        n3.metric("Load avg",f"{la[0]:.2f}" if la else "—")
+    elif s["online"]:
+        st.markdown(f'<div style="font-size:12px;color:#6e7681;padding:10px 0">{T("no_agent")}</div>',unsafe_allow_html=True)
+
+    st.caption(f"{'🟢 авто-обновление 3с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ДАШБОРД
+# ═══════════════════════════════════════════════════════════════
+with tab_dash:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    if st.session_state.monitoring_active: frag_live()
+    else: frag_paused()
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ОБЗОР СЕРВЕРА
+# ═══════════════════════════════════════════════════════════════
+with tab_ov:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    if st.session_state.monitoring_active: frag_ov_live()
+    else: frag_ov_paused()
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: СЛУЖБЫ
+# ═══════════════════════════════════════════════════════════════
+with tab_svc:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    tok=st.session_state.agent_token
+    host=server_url.replace("https://","").replace("http://","").split("/")[0]
+    port=st.session_state.agent_ports.get(env_choice,9999)
+
+    # Топ процессов (фишка Netdata)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("top_proc")}</div>',unsafe_allow_html=True)
+    if st.button("🔄 Загрузить процессы",key="btn_procs"):
+        data=fetch_agent(host,port,"/processes")
+        st.session_state["procs"]=data.get("processes",[]) if data else []
+        if not data: st.error("Агент не отвечает")
+    if st.session_state.get("procs"):
+        rows=[{"PID":str(p["pid"]),"Процесс":p["name"],"CPU %":f"{p['cpu']:.1f}","RAM %":f"{p['ram']:.1f}"}
+              for p in st.session_state["procs"]]
+        st.dataframe(rows,hide_index=True,width="stretch",
+            column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["PID","Процесс","CPU %","RAM %"]})
+
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #21262d;padding-top:12px">{T("svc_title")}</div>',unsafe_allow_html=True)
+    cf,cc=st.columns([2,3])
+    with cf:
+        if st.button(T("svc_refresh"),key="btn_svc"):
+            res=exec_remote(host,"systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1,$4}' | head -30",port,tok)
+            if res.get("error"): st.session_state["svc_err"]=res["error"]
+            else:
+                svcs=[]
+                for l in res.get("stdout","").splitlines():
+                    if l.strip():
+                        pp=l.split()
+                        svcs.append({"name":pp[0].replace(".service",""),"sub":pp[1] if len(pp)>1 else "?"})
+                st.session_state["svc_list"]=svcs; st.session_state.pop("svc_err",None)
+    with cc:
+        custom=st.text_input("",placeholder="nginx, docker, postgresql...",key="custom_svc",label_visibility="collapsed")
+    if st.session_state.get("svc_err"): st.error(st.session_state["svc_err"])
+
+    def _svc(action,svc):
+        cmd=f"sudo systemctl {action} {svc}.service 2>&1; systemctl is-active {svc}.service"
+        with st.spinner(f"{action} {svc}..."):
+            res=exec_remote(host,cmd,port,tok)
+        out=res.get("stdout","").strip() if not res.get("error") else res["error"]
+        st.session_state[f"svcres_{svc}"]=f"{action}: {out}"
+        add_audit(env_choice,cmd,res.get("returncode",-1)); add_log(f"[service] {action} {svc}")
+
+    if custom:
+        st.markdown(f'<div style="font-size:11px;color:#8b949e;margin:8px 0 4px">Управление: <b style="color:#e6edf3">{custom}</b></div>',unsafe_allow_html=True)
+        b1,b2,b3,b4,b5=st.columns(5)
+        if b1.button("▶ Start",key="sst"): _svc("start",custom); st.rerun()
+        if b2.button("⏹ Stop",key="ssp"): _svc("stop",custom); st.rerun()
+        if b3.button("↺ Restart",key="srs"): _svc("restart",custom); st.rerun()
+        if b4.button("⟳ Reload",key="srl"): _svc("reload",custom); st.rerun()
+        if b5.button("📋 Status",key="sss"):
+            res=exec_remote(host,f"systemctl status {custom}.service --no-pager -l 2>&1",port,tok)
+            st.session_state[f"svcres_{custom}"]=res.get("stdout","") or res.get("error",""); st.rerun()
+        rk=f"svcres_{custom}"
+        if rk in st.session_state:
+            out=st.session_state[rk]
+            col="#3fb950" if "active" in out else "#f85149" if "failed" in out.lower() else "#e6edf3"
+            st.markdown(f'<pre style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:12px;color:{col};white-space:pre-wrap;max-height:200px;overflow-y:auto">{out}</pre>',unsafe_allow_html=True)
+
+    if st.session_state.get("svc_list"):
+        for svc in st.session_state["svc_list"]:
+            ac="#3fb950" if svc["sub"]=="running" else "#e3b341"
+            c1,c2,c3,c4=st.columns([3,1,1,1])
+            c1.markdown(f'<div style="padding:4px 0;font-size:12px;color:#e6edf3"><span class="dot dot-green"></span>{svc["name"]} <span style="font-size:10px;color:{ac}">{svc["sub"]}</span></div>',unsafe_allow_html=True)
+            if c2.button("▶",key=f"qs_{svc['name']}"): _svc("start",svc["name"]); st.rerun()
+            if c3.button("⏹",key=f"qx_{svc['name']}"): _svc("stop",svc["name"]); st.rerun()
+            if c4.button("↺",key=f"qr_{svc['name']}"): _svc("restart",svc["name"]); st.rerun()
+
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #21262d;padding-top:12px">{T("log_stream")}</div>',unsafe_allow_html=True)
+    l1,l2,l3=st.columns([3,1,1])
+    with l1: logsrc=st.text_input("",value="/var/log/syslog",key="logsrc",label_visibility="collapsed")
+    with l2: loglines=st.number_input("Строк",10,500,50,10,key="loglines")
+    with l3: getlog=st.button(T("log_get"),key="btn_log",use_container_width=True)
+    if getlog:
+        res=exec_remote(host,f"tail -n {loglines} {logsrc} 2>&1",port,tok)
+        if res.get("error"): st.error(res["error"])
+        else:
+            out=res.get("stdout","").strip()
+            add_log(f"[log] tail {loglines} {logsrc}")
+            st.markdown(f'<pre style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:400px;overflow-y:auto">{out or "(пусто)"}</pre>',unsafe_allow_html=True)
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ТЕРМИНАЛ
+# ═══════════════════════════════════════════════════════════════
+with tab_term:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    tok=st.session_state.agent_token
+    host=server_url.replace("https://","").replace("http://","").split("/")[0]
+    port=st.session_state.agent_ports.get(env_choice,9999)
+    prefill=st.session_state.pop("term_prefill","")
+    tc,tsn,tau=st.tabs([T("console"),T("snippets"),T("audit")])
+
+    with tc:
+        qc=[("top -bn1|head -16","📊 top"),("df -h","💾 disk"),("free -h","🧠 mem"),
+            ("uptime","⏱ uptime"),("ps aux --sort=-%cpu|head -12","⚙ procs"),("journalctl -n 25 --no-pager","📋 journal")]
+        cols=st.columns(6)
+        for col,(cmd,lbl) in zip(cols,qc):
+            if col.button(lbl,key=f"qc_{lbl}",use_container_width=True):
+                with st.spinner(cmd[:30]): res=exec_remote(host,cmd,port,tok)
+                st.session_state.term_history.append({"ts":datetime.now().strftime("%H:%M:%S"),"cmd":cmd,"res":res})
+                add_audit(env_choice,cmd,res.get("returncode",-1)); st.rerun()
+        if st.session_state.term_history:
+            _,d2,d3=st.columns([4,1,1])
+            txt="\n".join(f"[{e['ts']}] $ {e['cmd']}\n{e['res'].get('error','') or e['res'].get('stdout','')}\n" for e in st.session_state.term_history)
+            d2.download_button(T("dl_txt"),data=txt.encode(),file_name=f"term_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",mime="text/plain",key="dl_term",use_container_width=True)
+            if d3.button(T("clear"),key="clr_term",use_container_width=True): st.session_state.term_history=[]; st.rerun()
+            parts=[]
+            for e in st.session_state.term_history:
+                ce=e["cmd"].replace("<","&lt;").replace(">","&gt;")
+                if e["res"].get("error"): oe=e["res"]["error"].replace("<","&lt;").replace(">","&gt;"); oc="#ff7b72"
+                else: oe=e["res"].get("stdout","").replace("<","&lt;").replace(">","&gt;"); oc="#e6edf3" if e["res"].get("returncode",0)==0 else "#e3b341"
+                parts.append(f'<div style="margin-bottom:10px"><div style="font-size:11px;margin-bottom:2px"><span style="color:#6e7681">[{e["ts"]}]</span> <span style="color:#bc8cff">{host}</span> <span style="color:#6e7681">$</span> <span style="color:#e6edf3">{ce}</span></div><pre style="margin:0;padding:8px 12px;background:#0d1117;border-radius:4px;border-left:2px solid #21262d;color:{oc};font-size:11px;white-space:pre-wrap;max-height:280px;overflow-y:auto">{oe.strip() or "(нет вывода)"}</pre></div>')
+            st.markdown('<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px;max-height:440px;overflow-y:auto">'+"".join(parts)+'</div>',unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:40px;text-align:center"><div style="font-size:12px;color:#30363d">🕷️ BlackArachnia Terminal</div></div>',unsafe_allow_html=True)
+        st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
+        i1,i2=st.columns([5,1])
+        with i1: cmdin=st.text_input("",value=prefill,placeholder=T("cmd_ph"),key="term_cmd",label_visibility="collapsed")
+        with i2: runb=st.button(T("run"),key="term_run",use_container_width=True)
+        if runb and cmdin.strip():
+            c=cmdin.strip(); hh=st.session_state.term_cmd_history
+            if not hh or hh[-1]!=c: hh.append(c); st.session_state.term_cmd_history=hh[-100:]
+            with st.spinner("..."): res=exec_remote(host,c,port,tok)
+            st.session_state.term_history.append({"ts":datetime.now().strftime("%H:%M:%S"),"cmd":c,"res":res})
+            add_audit(env_choice,c,res.get("returncode",-1)); st.rerun()
+        if st.session_state.term_cmd_history:
+            with st.expander(f"⌨ {T('history')} ({len(st.session_state.term_cmd_history)})"):
+                for pc in reversed(st.session_state.term_cmd_history[-20:]):
+                    h1,h2=st.columns([5,1]); h1.code(pc,language="bash")
+                    if h2.button("▶",key=f"h_{hash(pc)}",use_container_width=True):
+                        with st.spinner("..."): res=exec_remote(host,pc,port,tok)
+                        st.session_state.term_history.append({"ts":datetime.now().strftime("%H:%M:%S"),"cmd":pc,"res":res}); st.rerun()
+
+    with tsn:
+        with st.expander(T("add_snippet")):
+            sn=st.text_input(T("name"),key="sn_name"); sc=st.text_area(T("command"),key="sn_cmd",height=55)
+            if st.button(T("save"),key="save_snip") and sn.strip() and sc.strip():
+                st.session_state.term_snippets.append({"name":sn.strip(),"cmd":sc.strip()}); st.rerun()
+        for i,sp in enumerate(st.session_state.term_snippets):
+            s1,s2,s3=st.columns([2,4,1])
+            s1.markdown(f'<div style="font-size:12px;color:#e6edf3;padding:4px 0">{sp["name"]}</div>',unsafe_allow_html=True)
+            s2.code(sp["cmd"],language="bash")
+            sx1,sx2=s3.columns(2)
+            if sx1.button("▶",key=f"rs_{i}",use_container_width=True):
+                with st.spinner(sp["name"]): res=exec_remote(host,sp["cmd"],port,tok)
+                st.session_state.term_history.append({"ts":datetime.now().strftime("%H:%M:%S"),"cmd":sp["cmd"],"res":res})
+                add_audit(env_choice,sp["cmd"],res.get("returncode",-1)); st.rerun()
+            if sx2.button("🗑",key=f"ds_{i}",use_container_width=True): st.session_state.term_snippets.pop(i); st.rerun()
+
+    with tau:
+        if not st.session_state.audit_log: st.info("Аудит пуст")
+        else:
+            a1,a2=st.columns([1,1])
+            tsv="\n".join(["Time\tServer\tCmd\tRC"]+[f"{a['ts']}\t{a['server']}\t{a['cmd']}\t{a['rc']}" for a in reversed(st.session_state.audit_log)])
+            a1.download_button("💾 .tsv",data=tsv.encode(),file_name=f"audit_{datetime.now().strftime('%Y%m%d')}.tsv",mime="text/tab-separated-values",key="dl_audit",use_container_width=True)
+            if a2.button(T("clear"),key="clr_audit",use_container_width=True): st.session_state.audit_log=[]; st.rerun()
+            rows=[{"Время":a["ts"],"Сервер":a["server"],"Команда":a["cmd"][:50],"RC":str(a["rc"]),"OK":"✅" if a["rc"]==0 else "❌"} for a in reversed(st.session_state.audit_log[-100:])]
+            st.dataframe(rows,hide_index=True,width="stretch",column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["Время","Сервер","Команда","RC","OK"]})
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ИИ ЧАТ (с памятью)
+# ═══════════════════════════════════════════════════════════════
+with tab_ai:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    a1,a2,a3=st.columns([3,1,1])
+    with a1:
+        mode=st.selectbox("",["auto","groq","gemini","openai"],
+            format_func=lambda x:{"auto":"Auto Router","groq":"Groq","gemini":"Gemini Flash","openai":"GPT-4o mini"}[x],
+            label_visibility="collapsed")
+    with a2:
+        if st.button(T("analyze"),key="btn_analyze",use_container_width=True):
+            p="Проанализируй состояние серверов, выяви проблемы и риски. Для каждой: что не так, почему важно, что делать.\n\n"+build_context()
+            st.session_state.chat_messages.append({"role":"user","content":"🔍 Анализ серверов"})
+            with st.spinner(T("thinking")): r=route_and_call(p,"auto")
+            if not r.get("error"): st.session_state.chat_messages.append({"role":"assistant","content":r["text"],"meta":f"{r['label']} · {r['latency']}ms"})
             st.rerun()
-    logs = st.session_state.logs[::-1]
-    if filter_text:
-        logs = [l for l in logs if filter_text.lower() in l.lower()]
-    st.caption(f"Всего: {len(st.session_state.logs)} · Показано: {len(logs)}")
-    st.code("\n".join(logs) if logs else "// no entries.", language=None)
+    with a3:
+        if st.button(T("clear_chat"),key="clr_chat",use_container_width=True): st.session_state.chat_messages=[]; st.rerun()
+
+    qa=[(T("q_cmd"),"Предложи bash-команду для диагностики производительности. Только команда и краткое объяснение."),
+        (T("q_report"),"Краткий отчёт по использованию ресурсов серверов."),
+        (T("q_sec"),"Проверь конфигурацию на типичные проблемы безопасности.")]
+    qcols=st.columns(3)
+    for col,(lbl,pr) in zip(qcols,qa):
+        if col.button(lbl,key=f"qai_{lbl[:5]}",use_container_width=True):
+            st.session_state.chat_messages.append({"role":"user","content":lbl})
+            with st.spinner(T("thinking")): r=route_and_call(pr+"\n\n"+build_context(),mode)
+            if not r.get("error"): st.session_state.chat_messages.append({"role":"assistant","content":r["text"],"meta":f"{r['label']} · {r['latency']}ms"})
+            st.rerun()
+
+    box=st.container(height=420)
+    with box:
+        if not st.session_state.chat_messages:
+            st.markdown(f'<div style="text-align:center;padding:40px 0;color:#6e7681;font-size:12px">{T("chat_empty")}</div>',unsafe_allow_html=True)
+        for msg in st.session_state.chat_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg.get("meta"): st.caption(msg["meta"])
+                if msg["role"]=="assistant" and "```" in msg["content"]:
+                    for cb in re.findall(r"```(?:bash|sh)?\n(.*?)```",msg["content"],re.DOTALL):
+                        cb=cb.strip()
+                        if cb and st.button(T("send_term"),key=f"st_{hash(cb)}",help=cb[:60]):
+                            st.session_state["term_prefill"]=cb; st.info("→ Terminal")
+
+    if uin:=st.chat_input(T("chat_ph")):
+        with st.spinner(T("thinking")): r=route_and_call(uin,mode)
+        st.session_state.chat_messages.append({"role":"user","content":uin})
+        if r.get("error"): st.session_state.chat_messages.append({"role":"assistant","content":r["error"]})
+        else:
+            meta=f"{r['label']} · {r['task']} · {r['latency']}ms · {r['inp']}↑{r['out']}↓"
+            st.session_state.chat_messages.append({"role":"assistant","content":r["text"],"meta":meta})
+        st.rerun()
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ИНЦИДЕНТЫ
+# ═══════════════════════════════════════════════════════════════
+with tab_inc:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    with st.expander(T("thresholds")):
+        st.caption("Инцидент создаётся автоматически при превышении")
+        for sn in st.session_state.servers_dict:
+            th=st.session_state.thresholds.get(sn,{"cpu":85,"ram":90,"disk":90})
+            st.markdown(f'<div style="font-size:11px;color:#e6edf3;margin:6px 0 2px">{sn}</div>',unsafe_allow_html=True)
+            t1,t2,t3=st.columns(3)
+            th["cpu"]=t1.number_input("CPU %",50,100,th["cpu"],key=f"th_c_{sn}")
+            th["ram"]=t2.number_input("RAM %",50,100,th["ram"],key=f"th_r_{sn}")
+            th["disk"]=t3.number_input("Disk %",50,100,th["disk"],key=f"th_d_{sn}")
+            st.session_state.thresholds[sn]=th
+    alli=st.session_state.incidents
+    opi=[i for i in alli if i["status"]=="open"]
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric(T("inc_open"),str(len(opi)))
+    c2.metric(T("inc_crit"),str(sum(1 for i in opi if i["severity"]=="critical")))
+    c3.metric(T("inc_warn"),str(sum(1 for i in opi if i["severity"]=="warning")))
+    c4.metric(T("inc_total"),str(len(alli)))
+    st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
+    f1,f2,f3=st.columns([2,2,1])
+    fs=f1.selectbox("",["all","open","closed"],format_func=lambda x:{"all":"Все","open":"Открытые","closed":"Закрытые"}[x],key="if_s",label_visibility="collapsed")
+    fv=f2.selectbox("",["all","critical","warning"],format_func=lambda x:{"all":"Все","critical":"Критичные","warning":"Warning"}[x],key="if_v",label_visibility="collapsed")
+    if f3.button(T("clear_closed"),key="clr_closed",use_container_width=True):
+        st.session_state.incidents=[i for i in alli if i["status"]!="closed"]; st.rerun()
+    flt=[i for i in reversed(alli) if (fs=="all" or i["status"]==fs) and (fv=="all" or i["severity"]==fv)]
+    if not flt: st.markdown(f'<div style="text-align:center;padding:30px;font-size:12px;color:#6e7681">{T("no_inc")}</div>',unsafe_allow_html=True)
+    else:
+        for inc in flt[:100]:
+            bc="inc-critical" if inc["severity"]=="critical" else "inc-warning"
+            sc="#3fb950" if inc["status"]=="closed" else "#f85149" if inc["severity"]=="critical" else "#e3b341"
+            st.markdown(f'<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:10px"><span class="inc-badge {bc}">{inc["severity"].upper()}</span><div><div style="font-size:12px;color:#e6edf3;font-weight:500">{inc["server"]} — {inc["msg"]}</div><div style="font-size:10px;color:#6e7681;margin-top:2px">#{inc["id"]} · {inc["opened"]}{" · закрыт "+inc["closed"] if inc["closed"] else ""}</div></div></div><span style="font-size:11px;color:{sc}">{inc["status"]}</span></div>',unsafe_allow_html=True)
+            if inc["status"]=="open":
+                if st.button(f"{T('resolve')} #{inc['id']}",key=f"res_{inc['id']}"):
+                    inc["status"]="closed"; inc["closed"]=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    add_log(f"[incident] закрыт #{inc['id']}"); st.rerun()
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ЛОГИ
+# ═══════════════════════════════════════════════════════════════
+with tab_logs:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    l1,l2=st.columns([4,1])
+    with l1: lf=st.text_input("",placeholder=T("filter_ph"),key="log_filter",label_visibility="collapsed")
+    with l2:
+        if st.button(T("clear"),key="clr_logs",use_container_width=True): st.session_state.logs=["[info] очищено."]; st.rerun()
+    ls=st.session_state.logs[::-1]
+    if lf: ls=[l for l in ls if lf.lower() in l.lower()]
+    st.caption(f"{T('total')}: {len(st.session_state.logs)} · {T('shown')}: {len(ls)}")
+    st.code("\n".join(ls) if ls else "// пусто",language=None)
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB: ДОБАВИТЬ СЕРВЕР
+# ═══════════════════════════════════════════════════════════════
+with tab_add:
+    st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:12px">{T("add_title")}</div>',unsafe_allow_html=True)
+    st.markdown('<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#8b949e;line-height:1.7">Для CPU/RAM запусти <code style="color:#58a6ff">agent.py</code> на сервере, порт <b style="color:#e6edf3">9999</b>.</div>',unsafe_allow_html=True)
+    i1,i2=st.columns(2)
+    with i1:
+        st.markdown("**1. Скопируй**"); st.code("scp agent.py user@server:~/",language="bash")
+        st.markdown("**2. Установи**"); st.code("pip install psutil",language="bash")
+    with i2:
+        st.markdown("**3. Запусти с токеном**"); st.code("nohup python agent.py --token SECRET &",language="bash")
+        st.markdown("**4. Проверь**"); st.code("curl http://server:9999/metrics",language="bash")
+    with st.expander("⚙️ systemd автозапуск"):
+        st.code("""[Unit]
+Description=BlackArachnia Agent
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 /home/user/agent.py --token SECRET
+Restart=always
+[Install]
+WantedBy=multi-user.target""",language="ini")
+    st.markdown("---")
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("srv_name").upper()}</div>',unsafe_allow_html=True)
+    n1,n2,n3=st.columns([2,2,1])
+    with n1: nn=st.text_input(T("srv_name"),placeholder="PROD",key="add_name")
+    with n2: nh=st.text_input(T("srv_host"),placeholder="server.com",key="add_host")
+    with n3: np=st.number_input(T("agent_port"),1,65535,9999,key="add_port")
+    b1,b2,_=st.columns([1,1,2])
+    dt_test=b1.button(T("test_agent"),key="btn_test",use_container_width=True)
+    dt_add=b2.button(T("add_server"),key="btn_add",use_container_width=True)
+    if dt_test and nh.strip():
+        h=nh.strip().replace("https://","").replace("http://","").split("/")[0]
+        with st.spinner(f"Тест {h}:{np}..."): m=fetch_agent(h,int(np))
+        if m:
+            t1,t2,t3=st.columns(3)
+            t1.metric("CPU",f"{m.get('cpu_percent','?')}%")
+            t2.metric("RAM",f"{m.get('ram_used_gb',0):.1f}/{m.get('ram_total_gb',0):.1f}GB")
+            t3.metric("Disk",f"{m.get('disk_percent','?')}%")
+            st.success(f"✅ Агент отвечает {h}:{np}")
+        else: st.error(f"❌ Агент не отвечает {h}:{np}")
+    if dt_add:
+        n=nn.strip(); h=nh.strip().replace("https://","").replace("http://","").split("/")[0]
+        if not n: st.error("Введи имя")
+        elif not h: st.error("Введи хост")
+        elif n in st.session_state.servers_dict: st.error(f"'{n}' существует")
+        else:
+            ok,err=is_valid_hostname(h)
+            if ok:
+                st.session_state.servers_dict[n]=h
+                if int(np)!=9999: st.session_state.agent_ports[n]=int(np)
+                # Сохраняем для Telegram-бота и между сессиями
+                try:
+                    with open(_JSON_PATH,"w",encoding="utf-8") as f:
+                        json.dump(st.session_state.servers_dict,f,ensure_ascii=False,indent=2)
+                    with open(os.path.join(_DIR,".agent_ports.json"),"w",encoding="utf-8") as f:
+                        json.dump(st.session_state.agent_ports,f,ensure_ascii=False,indent=2)
+                except Exception: pass
+                add_log(f"[config] добавлен {n} → {h}")
+                st.success(f"✅ '{n}' добавлен"); st.rerun()
+            else: st.error(err)
+    st.markdown("---")
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("cur_servers")}</div>',unsafe_allow_html=True)
+    rows=[]
+    for sn,sh in st.session_state.servers_dict.items():
+        sc=st.session_state.server_cache.get(sn)
+        rows.append({"Имя":sn,"Хост":sh,"Порт":str(st.session_state.agent_ports.get(sn,9999)),
+            "Статус":"Online" if sc and sc.get("online") else "Offline" if sc else "Pending",
+            "CPU":f"{sc['cpu']:.0f}%" if sc and sc.get("cpu") is not None else "—",
+            "RAM":f"{sc['ram']:.0f}%" if sc and sc.get("ram") is not None else "—"})
+    st.dataframe(rows,hide_index=True,width="stretch",column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["Имя","Хост","Порт","Статус","CPU","RAM"]})
+    st.markdown("</div>",unsafe_allow_html=True)

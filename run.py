@@ -5,53 +5,80 @@ import webbrowser
 import threading
 import time
 import subprocess
+import importlib.util
 
-REQUIRED_PACKAGES = [
-    "groq",
-    "google-generativeai",
-    "openai",
-    "python-dotenv",
-    "psutil",  # для агента мониторинга
-    "cryptography",  # AES-256 шифрование ключей
+# ── Минимальные версии ─────────────────────────────────────────
+STREAMLIT_MIN = (1, 33, 0)
+
+# ── Пакеты: (import_name, pip_name) ───────────────────────────
+PACKAGES = [
+    ("streamlit",       "streamlit>=1.33.0"),
+    ("groq",            "groq"),
+    ("google.generativeai", "google-generativeai"),
+    ("openai",          "openai"),
+    ("dotenv",          "python-dotenv"),
+    ("psutil",          "psutil"),
+    ("cryptography",    "cryptography"),
 ]
 
-STREAMLIT_MIN_VERSION = (1, 33, 0)
+
+def pkg_installed(import_name: str) -> bool:
+    """Проверяет наличие пакета через importlib — без импорта."""
+    return importlib.util.find_spec(import_name) is not None
 
 
 def check_and_install():
-    # Проверяем версию Streamlit
-    try:
-        import streamlit as _st
-        ver = tuple(int(x) for x in _st.__version__.split(".")[:3])
-        if ver < STREAMLIT_MIN_VERSION:
-            min_ver = ".".join(str(x) for x in STREAMLIT_MIN_VERSION)
-            print(f"⬆️  Streamlit {_st.__version__} → обновляем до {min_ver}+...")
-            subprocess.run([sys.executable, "-m", "pip", "install", f"streamlit>={min_ver}"], check=True)
-            print("✅ Streamlit обновлён.\n")
-        else:
-            print(f"✓ Streamlit {_st.__version__}")
-    except ImportError:
-        print("📦 Устанавливаем Streamlit...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "streamlit>=1.33.0"], check=True)
-        print("✅ Streamlit установлен.\n")
+    """
+    Быстрая проверка: импортирует только то чего нет.
+    Если всё установлено — запуск занимает < 1 сек.
+    """
+    missing_pip = []
 
-    # Проверяем остальные пакеты
-    missing = []
-    for pkg in REQUIRED_PACKAGES:
-        import_name = pkg.replace("-", "_").split(".")[0]
+    # Streamlit — проверяем версию отдельно
+    if pkg_installed("streamlit"):
         try:
-            __import__(import_name)
-        except ImportError:
-            missing.append(pkg)
+            import streamlit as _st
+            ver = tuple(int(x) for x in _st.__version__.split(".")[:3])
+            if ver < STREAMLIT_MIN:
+                min_str = ".".join(str(x) for x in STREAMLIT_MIN)
+                print(f"⬆️  Streamlit {_st.__version__} устарел → обновляем до {min_str}+")
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", f"streamlit>={min_str}",
+                     "--quiet", "--disable-pip-version-check"],
+                    check=True
+                )
+                print("✅ Streamlit обновлён")
+            else:
+                print(f"✓ Streamlit {_st.__version__}")
+        except Exception as e:
+            print(f"⚠️  Ошибка проверки Streamlit: {e}")
+    else:
+        missing_pip.append("streamlit>=1.33.0")
 
-    if missing:
-        print(f"📦 Устанавливаем: {', '.join(missing)}...")
-        subprocess.run([sys.executable, "-m", "pip", "install"] + missing, check=True)
-        print("✅ Установка завершена.\n")
+    # Остальные пакеты — только проверка через find_spec (мгновенно)
+    for import_name, pip_name in PACKAGES[1:]:
+        top_level = import_name.split(".")[0]
+        if not pkg_installed(top_level):
+            missing_pip.append(pip_name)
+        else:
+            print(f"✓ {pip_name.split('>=')[0].split('[')[0]}")
+
+    # Устанавливаем только то чего нет
+    if missing_pip:
+        print(f"\n📦 Устанавливаем: {', '.join(missing_pip)}")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install"] + missing_pip +
+            ["--quiet", "--disable-pip-version-check"],
+            check=True
+        )
+        print("✅ Установка завершена\n")
+    else:
+        print("✅ Все зависимости установлены\n")
 
 
-def is_port_in_use(port):
+def is_port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
         return s.connect_ex(("localhost", port)) == 0
 
 
@@ -62,45 +89,61 @@ def start_agent():
         return None
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    agent_path = os.path.join(current_dir, "agent.py")
+    agent_path  = os.path.join(current_dir, "agent.py")
 
     if not os.path.exists(agent_path):
         print("⚠️  agent.py не найден — CPU/RAM мониторинг недоступен")
         return None
 
-    # Запускаем агент как отдельный процесс
     proc = subprocess.Popen(
         [sys.executable, agent_path],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    # Ждём пока агент поднимется
     deadline = time.time() + 5
     while time.time() < deadline:
         if is_port_in_use(9999):
             print("✅ Агент запущен на порту 9999 (CPU/RAM мониторинг активен)")
             return proc
-        time.sleep(0.2)
+        time.sleep(0.15)
 
-    print("⚠️  Агент не ответил за 5 сек — запускается в фоне")
+    print("⚠️  Агент запускается в фоне")
     return proc
 
 
-def open_browser(port=8501, timeout=15):
+def open_browser(port: int = 8501, timeout: int = 20):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if is_port_in_use(port):
-            time.sleep(0.3)
+            time.sleep(0.4)
             webbrowser.open(f"http://localhost:{port}")
             return
         time.sleep(0.3)
-    print("⚠️  Браузер не открыт — Streamlit не ответил.")
+    print("⚠️  Браузер не открыт — Streamlit не ответил за 20 сек")
+
+
+def start_tg_bot():
+    """Запускает Telegram-бота в фоне, если задан TG_BOT_TOKEN в .env."""
+    if not os.environ.get("TG_BOT_TOKEN", "").strip():
+        print("ℹ️  Telegram-бот не запущен (нет TG_BOT_TOKEN в .env)")
+        return None
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    bot_path    = os.path.join(current_dir, "tg_bot.py")
+    if not os.path.exists(bot_path):
+        return None
+    proc = subprocess.Popen(
+        [sys.executable, bot_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print("🤖 Telegram-бот запущен (управление через мессенджер)")
+    return proc
 
 
 def load_env():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.join(current_dir, ".env")
+    env_path    = os.path.join(current_dir, ".env")
     if os.path.exists(env_path):
         with open(env_path, encoding="utf-8") as f:
             for line in f:
@@ -111,33 +154,37 @@ def load_env():
 
 
 if __name__ == "__main__":
-    print("🚀 Запуск TESM...\n")
+    print("🕷️  BlackArachnia — запуск...\n")
 
+    t0 = time.time()
     check_and_install()
     load_env()
 
-    # Запускаем агент мониторинга
     agent_proc = start_agent()
+    bot_proc   = start_tg_bot()
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    app_path = os.path.join(current_dir, "app.py")
+    app_path    = os.path.join(current_dir, "app.py")
 
     if is_port_in_use(8501):
-        print("⚠️  Порт 8501 уже занят.")
+        print("⚠️  Порт 8501 уже занят — возможно приложение уже запущено")
 
     threading.Thread(target=open_browser, daemon=True).start()
 
-    print("\n🌐 Открываем браузер...\n")
+    print(f"🌐 Открываем браузер...  (подготовка заняла {time.time()-t0:.1f} сек)\n")
 
     try:
         subprocess.run([
             sys.executable, "-m", "streamlit", "run", app_path,
             "--server.headless", "true",
+            "--server.port", "8501",
         ])
     finally:
-        # Останавливаем агент при закрытии TESM
         if agent_proc:
             agent_proc.terminate()
-            print("🛑 Агент остановлен.")
+            print("🛑 Агент остановлен")
+        if bot_proc:
+            bot_proc.terminate()
+            print("🛑 Telegram-бот остановлен")
 
-    print("\n🛑 TESM завершён.")
+    print("🛑 BlackArachnia завершён")
