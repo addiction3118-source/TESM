@@ -3,6 +3,18 @@ import time, re, json, os, urllib.request, urllib.error, socket, ssl
 import datetime as dt
 from datetime import datetime
 
+# ── Загрузка .env (ключи API + Telegram) ──────────────────────
+def _load_dotenv():
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+_load_dotenv()
+
 try:
     from keys_store import save_keys, load_keys, keys_file_exists, delete_keys
     KEYS_STORE_AVAILABLE = True
@@ -66,12 +78,12 @@ st.markdown("""
 .block-container { padding:0!important; max-width:100%!important; }
 [data-testid="stAppViewContainer"] { padding:0!important; }
 
-.stApp { background:#0d1117!important; color:#e6edf3!important;
+.stApp { background:#0a0612!important; color:#ede6f3!important;
          font-family:'Inter',system-ui,sans-serif!important; }
 
 /* Sidebar — статичный, не сворачивается */
 [data-testid="stSidebar"] {
-    background:#161b22!important; border-right:1px solid #21262d!important;
+    background:#120a1f!important; border-right:1px solid #2a1a3d!important;
     min-width:225px!important; max-width:225px!important; transform:none!important;
 }
 [data-testid="stSidebarCollapsedControl"] { display:none!important; }
@@ -79,22 +91,22 @@ st.markdown("""
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stTextArea textarea,
 [data-testid="stSidebar"] .stNumberInput input {
-    background:#0d1117!important; border:1px solid #30363d!important;
+    background:#0a0612!important; border:1px solid #3d2459!important;
     color:#e6edf3!important; font-size:12px!important; border-radius:6px!important; }
 [data-testid="stSidebar"] .stSelectbox > div > div {
-    background:#0d1117!important; border:1px solid #30363d!important;
+    background:#0a0612!important; border:1px solid #3d2459!important;
     color:#e6edf3!important; border-radius:6px!important; }
 [data-testid="stSidebar"] .stButton > button {
-    background:#21262d!important; border:1px solid #30363d!important;
+    background:#2a1a3d!important; border:1px solid #3d2459!important;
     color:#8b949e!important; border-radius:6px!important; width:100%!important; }
 [data-testid="stSidebar"] .stButton > button:hover {
-    background:#30363d!important; color:#e6edf3!important; }
+    background:#3d2459!important; color:#e6edf3!important; }
 [data-testid="stSidebar"] [data-testid="stExpander"] {
-    background:#0d1117!important; border:1px solid #21262d!important; }
+    background:#0a0612!important; border:1px solid #2a1a3d!important; }
 
 /* Tabs */
 .stTabs [data-baseweb="tab-list"] {
-    background:#161b22!important; border-bottom:1px solid #21262d!important;
+    background:#150d24!important; border-bottom:1px solid #2a1a3d!important;
     gap:0!important; padding:0 16px!important; }
 .stTabs [data-baseweb="tab"] {
     background:transparent!important; color:#8b949e!important;
@@ -102,12 +114,12 @@ st.markdown("""
     border-radius:0!important; border-bottom:2px solid transparent!important;
     letter-spacing:0.02em!important; text-transform:uppercase!important; }
 .stTabs [aria-selected="true"] {
-    color:#58a6ff!important; border-bottom:2px solid #58a6ff!important;
+    color:#bf5fff!important; border-bottom:2px solid #bf5fff!important;
     background:transparent!important; }
 
 /* Метрики */
 [data-testid="stMetric"] {
-    background:#161b22!important; border:1px solid #21262d!important;
+    background:#150d24!important; border:1px solid #2a1a3d!important;
     border-radius:8px!important; padding:14px 16px!important; }
 [data-testid="stMetricLabel"] { color:#8b949e!important; font-size:10px!important;
     font-weight:500!important; letter-spacing:0.08em!important;
@@ -117,23 +129,23 @@ st.markdown("""
 [data-testid="stMetricDelta"] { font-size:11px!important; }
 
 /* Кнопки */
-.stButton > button { background:#21262d!important; color:#8b949e!important;
-    border:1px solid #30363d!important; border-radius:6px!important;
+.stButton > button { background:#2a1a3d!important; color:#8b949e!important;
+    border:1px solid #3d2459!important; border-radius:6px!important;
     font-size:12px!important; font-weight:500!important; transition:all .15s!important; }
-.stButton > button:hover { background:#30363d!important; color:#e6edf3!important;
-    border-color:#58a6ff!important; }
+.stButton > button:hover { background:#3d2459!important; color:#e6edf3!important;
+    border-color:#bf5fff!important; box-shadow:0 0 8px rgba(191,95,255,.4)!important; }
 
 /* Inputs */
 .stTextInput input,.stTextArea textarea {
-    background:#161b22!important; color:#e6edf3!important;
-    border:1px solid #30363d!important; border-radius:6px!important;
+    background:#150d24!important; color:#e6edf3!important;
+    border:1px solid #3d2459!important; border-radius:6px!important;
     font-size:13px!important; }
 .stTextInput input:focus,.stTextArea textarea:focus {
-    border-color:#58a6ff!important; box-shadow:0 0 0 3px rgba(88,166,255,.1)!important; }
-.stSelectbox > div > div { background:#161b22!important; border:1px solid #30363d!important;
+    border-color:#bf5fff!important; box-shadow:0 0 0 3px rgba(191,95,255,.25)!important; }
+.stSelectbox > div > div { background:#150d24!important; border:1px solid #3d2459!important;
     color:#e6edf3!important; border-radius:6px!important; font-size:13px!important; }
-.stNumberInput input { background:#161b22!important; color:#e6edf3!important;
-    border:1px solid #30363d!important; border-radius:6px!important; }
+.stNumberInput input { background:#150d24!important; color:#e6edf3!important;
+    border:1px solid #3d2459!important; border-radius:6px!important; }
 
 /* Alerts */
 .stSuccess { background:#0d2a1a!important; border:1px solid #238636!important;
@@ -141,38 +153,173 @@ st.markdown("""
 .stError { background:#2d0f0f!important; border:1px solid #da3633!important;
     border-radius:6px!important; color:#ff7b72!important; }
 .stInfo { background:#0c2233!important; border:1px solid #388bfd!important;
-    border-radius:6px!important; color:#58a6ff!important; }
+    border-radius:6px!important; color:#bf5fff!important; }
 .stWarning { background:#2a1f00!important; border:1px solid #d29922!important;
     border-radius:6px!important; color:#e3b341!important; }
 [data-testid="stAlert"] { font-size:12px!important; }
 
 /* Expander / DataFrame / Chat / Code */
-[data-testid="stExpander"] { background:#161b22!important;
-    border:1px solid #21262d!important; border-radius:8px!important; }
+[data-testid="stExpander"] { background:#150d24!important;
+    border:1px solid #2a1a3d!important; border-radius:8px!important; }
 [data-testid="stExpander"] summary { color:#8b949e!important; font-size:12px!important; }
-[data-testid="stDataFrame"] { border:1px solid #21262d!important;
-    border-radius:8px!important; overflow:hidden!important; background:#0d1117!important; }
-[data-testid="stDataFrame"] * { background:#0d1117!important; color:#c9d1d9!important; }
-[data-testid="stDataFrame"] th { background:#161b22!important; color:#8b949e!important;
+[data-testid="stDataFrame"] { border:1px solid #2a1a3d!important;
+    border-radius:8px!important; overflow:hidden!important; background:#0a0612!important; }
+[data-testid="stDataFrame"] * { background:#0a0612!important; color:#c9d1d9!important; }
+[data-testid="stDataFrame"] th { background:#150d24!important; color:#8b949e!important;
     font-size:11px!important; text-transform:uppercase!important; }
-[data-testid="stDataFrame"] td { background:#0d1117!important; color:#c9d1d9!important;
+[data-testid="stDataFrame"] td { background:#0a0612!important; color:#c9d1d9!important;
     font-size:12px!important; font-family:'JetBrains Mono',monospace!important; }
-[data-testid="stChatInput"] { background:#161b22!important;
-    border:1px solid #30363d!important; border-radius:8px!important; }
-[data-testid="stChatInput"] textarea { background:#161b22!important; color:#e6edf3!important; }
-[data-testid="stChatMessage"] { background:#161b22!important;
-    border:1px solid #21262d!important; border-radius:8px!important; margin-bottom:6px!important; }
+[data-testid="stChatInput"] { background:#150d24!important;
+    border:1px solid #3d2459!important; border-radius:8px!important; }
+[data-testid="stChatInput"] textarea { background:#150d24!important; color:#e6edf3!important; }
+[data-testid="stChatMessage"] { background:#150d24!important;
+    border:1px solid #2a1a3d!important; border-radius:8px!important; margin-bottom:6px!important; }
 [data-testid="stChatMessage"] p { color:#c9d1d9!important; font-size:13px!important; }
-.stCode,code,pre { background:#161b22!important; color:#e6edf3!important;
-    border:1px solid #21262d!important; border-radius:6px!important;
+.stCode,code,pre { background:#150d24!important; color:#e6edf3!important;
+    border:1px solid #2a1a3d!important; border-radius:6px!important;
     font-size:12px!important; font-family:'JetBrains Mono',monospace!important; }
 .stCaption { color:#6e7681!important; font-size:11px!important; }
 .stToggle label { color:#8b949e!important; font-size:12px!important; }
-hr { border-color:#21262d!important; }
+hr { border-color:#2a1a3d!important; }
+
+
+/* Анти-мигание при авто-обновлении фрагмента */
+[data-testid="stAppViewContainer"] * { animation-duration:0s!important; }
+.element-container { transition:none!important; }
+[data-stale="true"], [data-stale="false"] {
+    opacity:1!important; transition:none!important; filter:none!important;
+}
+[data-testid="stVerticalBlock"] { transition:none!important; }
+/* Скрываем индикатор "running" вверху справа */
+[data-testid="stStatusWidget"] { display:none!important; }
+.stSpinner { display:none!important; }
+
+
+/* ════ НЕОНОВЫЕ ЭФФЕКТЫ ════ */
+/* Активная вкладка — свечение */
+.stTabs [aria-selected="true"] {
+    text-shadow:0 0 8px rgba(191,95,255,.8)!important;
+}
+/* Метрики — фиолетовая рамка со свечением */
+[data-testid="stMetric"] {
+    box-shadow:0 0 0 1px rgba(191,95,255,.15), 0 2px 12px rgba(191,95,255,.08)!important;
+}
+[data-testid="stMetricValue"] {
+    color:#d9a6ff!important; text-shadow:0 0 10px rgba(191,95,255,.5)!important;
+}
+/* Кнопки при наведении — неоновый край */
+.stButton > button:hover {
+    box-shadow:0 0 12px rgba(191,95,255,.5)!important;
+    text-shadow:0 0 6px rgba(191,95,255,.6)!important;
+}
+/* Заголовок в шапке — свечение */
+.ba-glow { text-shadow:0 0 12px rgba(191,95,255,.7); }
+/* Чат-инпут focus */
+[data-testid="stChatInput"]:focus-within {
+    box-shadow:0 0 14px rgba(191,95,255,.4)!important;
+}
+/* Скроллбары фиолетовые */
+::-webkit-scrollbar { width:8px; height:8px; }
+::-webkit-scrollbar-track { background:#0a0612; }
+::-webkit-scrollbar-thumb { background:#3d2459; border-radius:4px; }
+::-webkit-scrollbar-thumb:hover { background:#bf5fff; }
+/* Градиентная полоса сверху приложения */
+.stApp::before {
+    content:""; position:fixed; top:0; left:0; right:0; height:2px; z-index:99999;
+    background:linear-gradient(90deg,transparent,#bf5fff,#7b2fde,#bf5fff,transparent);
+    box-shadow:0 0 10px rgba(191,95,255,.6);
+}
+
+
+/* ════ УСИЛЕННЫЙ НЕОН ════ */
+/* Sidebar — неоновая правая граница со свечением */
+[data-testid="stSidebar"] {
+    border-right:1px solid rgba(191,95,255,.35)!important;
+    box-shadow:4px 0 24px rgba(191,95,255,.12)!important;
+}
+/* Все текстовые поля — неоновая обводка */
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+.stSelectbox > div > div, [data-testid="stChatInput"] {
+    border:1px solid rgba(191,95,255,.3)!important;
+    box-shadow:inset 0 0 8px rgba(191,95,255,.06)!important;
+    transition:all .2s ease!important;
+}
+.stTextInput input:hover, .stTextArea textarea:hover,
+.stNumberInput input:hover, .stSelectbox > div > div:hover {
+    border-color:rgba(191,95,255,.6)!important;
+    box-shadow:0 0 10px rgba(191,95,255,.25)!important;
+}
+/* Кнопки — мягкая неоновая обводка постоянно */
+.stButton > button {
+    border:1px solid rgba(191,95,255,.25)!important;
+    transition:all .2s ease!important;
+}
+/* Метрики — неоновая рамка + градиентный фон */
+[data-testid="stMetric"] {
+    background:linear-gradient(135deg, #150d24 0%, #1a0f2e 100%)!important;
+    border:1px solid rgba(191,95,255,.3)!important;
+    box-shadow:0 0 0 1px rgba(191,95,255,.1), 0 4px 20px rgba(191,95,255,.1)!important;
+    transition:all .25s ease!important;
+}
+[data-testid="stMetric"]:hover {
+    border-color:rgba(191,95,255,.55)!important;
+    box-shadow:0 0 20px rgba(191,95,255,.25)!important;
+    transform:translateY(-2px);
+}
+/* Карточки ресурсов и серверов — неоновая обводка */
+.res-card, .dash-card {
+    border:1px solid rgba(191,95,255,.25)!important;
+    box-shadow:0 2px 16px rgba(191,95,255,.08)!important;
+    transition:all .25s ease!important;
+}
+.res-card:hover, .dash-card:hover {
+    border-color:rgba(191,95,255,.5)!important;
+    box-shadow:0 0 18px rgba(191,95,255,.2)!important;
+}
+/* Экспандеры — неон */
+[data-testid="stExpander"] {
+    border:1px solid rgba(191,95,255,.25)!important;
+    box-shadow:0 0 12px rgba(191,95,255,.06)!important;
+}
+/* Тоггл (включатель) — фиолетовый когда активен */
+[data-testid="stSidebar"] [aria-checked="true"] {
+    background:#bf5fff!important;
+}
+/* Chat-сообщения — лёгкая обводка */
+[data-testid="stChatMessage"] {
+    border:1px solid rgba(191,95,255,.2)!important;
+    box-shadow:0 2px 12px rgba(191,95,255,.06)!important;
+}
+/* Логотип в шапке + sidebar — пульсация свечения */
+@keyframes neon-pulse {
+    0%,100% { text-shadow:0 0 8px rgba(191,95,255,.5); }
+    50%     { text-shadow:0 0 16px rgba(191,95,255,.9), 0 0 24px rgba(191,95,255,.4); }
+}
+.ba-glow { animation:neon-pulse 3s ease-in-out infinite; }
+/* Заголовки секций sidebar — фиолетовый акцент слева */
+[data-testid="stSidebar"] .stButton > button:hover {
+    background:rgba(191,95,255,.12)!important;
+}
+
+
+/* Фикс белых полей в sidebar (password reveal, кнопка глаза) */
+[data-testid="stSidebar"] input { background:#0a0612!important; color:#ede6f3!important; }
+[data-testid="stSidebar"] [data-testid="stTextInput"] > div,
+[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div {
+    background:#0a0612!important; border-radius:6px!important;
+}
+[data-testid="stSidebar"] button[title="Show password text"],
+[data-testid="stSidebar"] button[title="Hide password text"] {
+    background:#0a0612!important; color:#bf5fff!important;
+}
+/* Кнопки RU/EN и активные — градиент при наведении */
+[data-testid="stSidebar"] .stButton > button:active {
+    background:linear-gradient(135deg, rgba(191,95,255,.3), rgba(123,47,222,.3))!important;
+}
 
 /* Прогресс-бар */
-.nd-bar-wrap { height:4px; background:#21262d; border-radius:2px; overflow:hidden; margin-top:3px; }
-.nd-bar-fill { height:100%; border-radius:2px; }
+.nd-bar-wrap { height:4px; background:#2a1a3d; border-radius:2px; overflow:hidden; margin-top:3px; }
+.nd-bar-fill { height:100%; border-radius:2px; box-shadow:0 0 8px currentColor; filter:brightness(1.1); }
 
 /* Sparkline */
 .spark-wrap { display:flex; align-items:flex-end; gap:1px; height:32px; }
@@ -196,13 +343,13 @@ hr { border-color:#21262d!important; }
 .inc-ok       { background:#0d2a1a; color:#3fb950; border:1px solid #238636; }
 
 /* Карточка ресурса */
-.res-card { background:#161b22; border:1px solid #21262d; border-radius:8px; padding:12px 14px; }
+.res-card { background:#150d24; border:1px solid #2a1a3d; border-radius:8px; padding:12px 14px; }
 .res-label { font-size:10px; color:#6e7681; letter-spacing:0.08em; text-transform:uppercase; }
 .res-value { font-size:22px; font-weight:600; color:#e6edf3;
     font-family:'JetBrains Mono',monospace; margin:4px 0; }
 
 /* Дашборд-карточка сервера */
-.dash-card { background:#161b22; border:1px solid #21262d; border-radius:10px;
+.dash-card { background:#150d24; border:1px solid #2a1a3d; border-radius:10px;
     padding:14px 16px; margin-bottom:8px; }
 .dash-card.online  { border-left:3px solid #3fb950; }
 .dash-card.offline { border-left:3px solid #f85149; }
@@ -212,21 +359,21 @@ hr { border-color:#21262d!important; }
 .spider-wrap { position:fixed; top:0; right:0; width:160px; height:160px;
     pointer-events:none; z-index:9999; overflow:hidden; }
 @keyframes spider-drop { 0%{top:8px} 100%{top:100px} }
-.spider { position:absolute; font-size:16px; right:16px;
+.spider { position:absolute; font-size:16px; right:16px; filter:drop-shadow(0 0 6px #bf5fff);
     animation:spider-drop 4s ease-in-out infinite alternate; }
 .spider-thread { position:absolute; top:0; right:26px; width:1px;
-    background:linear-gradient(to bottom,#30363d,transparent); height:110px; }
+    background:linear-gradient(to bottom,#3d2459,transparent); height:110px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="spider-wrap">
   <svg style="position:absolute;top:0;right:0;width:160px;height:160px" viewBox="0 0 160 160">
-    <line x1="160" y1="0" x2="0" y2="0" stroke="#30363d" stroke-width="0.5" opacity="0.5"/>
-    <line x1="160" y1="0" x2="160" y2="160" stroke="#30363d" stroke-width="0.5" opacity="0.5"/>
-    <line x1="160" y1="0" x2="30" y2="160" stroke="#30363d" stroke-width="0.4" opacity="0.3"/>
-    <path d="M130 0 Q160 0 160 30" stroke="#30363d" stroke-width="0.5" fill="none" opacity="0.4"/>
-    <path d="M90 0 Q160 0 160 70" stroke="#30363d" stroke-width="0.4" fill="none" opacity="0.3"/>
+    <line x1="160" y1="0" x2="0" y2="0" stroke="#bf5fff" stroke-width="0.5" opacity="0.5"/>
+    <line x1="160" y1="0" x2="160" y2="160" stroke="#bf5fff" stroke-width="0.5" opacity="0.5"/>
+    <line x1="160" y1="0" x2="30" y2="160" stroke="#bf5fff" stroke-width="0.4" opacity="0.3"/>
+    <path d="M130 0 Q160 0 160 30" stroke="#bf5fff" stroke-width="0.5" fill="none" opacity="0.4"/>
+    <path d="M90 0 Q160 0 160 70" stroke="#bf5fff" stroke-width="0.4" fill="none" opacity="0.3"/>
   </svg>
   <div class="spider-thread"></div>
   <div class="spider">🕷️</div>
@@ -238,7 +385,7 @@ st.markdown("""
 # ═══════════════════════════════════════════════════════════════
 TR = {
 "ru": {
- "monitoring":"МОНИТОРИНГ","auto_refresh":"Авто-обновление (3s)","environment":"ОКРУЖЕНИЕ",
+ "monitoring":"МОНИТОРИНГ","auto_refresh":"Авто-обновление (15с)","environment":"ОКРУЖЕНИЕ",
  "api_keys":"API КЛЮЧИ","agent_token":"ТОКЕН АГЕНТА","export":"ЭКСПОРТ","sysprompt":"СИСТЕМНЫЙ ПРОМПТ",
  "save_keys":"Сохранить ключи","encrypt_save":"Зашифровать и сохранить","password":"Пароль",
  "report_md":"📄 Отчёт .md","language":"ЯЗЫК","session":"СЕССИЯ","forget":"🚪 Забыть меня",
@@ -265,7 +412,7 @@ TR = {
  "filter_ph":"Фильтр...","total":"Всего","shown":"Показано",
 },
 "en": {
- "monitoring":"MONITORING","auto_refresh":"Auto-refresh (3s)","environment":"ENVIRONMENT",
+ "monitoring":"MONITORING","auto_refresh":"Auto-refresh (15s)","environment":"ENVIRONMENT",
  "api_keys":"API KEYS","agent_token":"AGENT TOKEN","export":"EXPORT","sysprompt":"SYSTEM PROMPT",
  "save_keys":"Save keys","encrypt_save":"Encrypt & save","password":"Password",
  "report_md":"📄 Report .md","language":"LANGUAGE","session":"SESSION","forget":"🚪 Forget me",
@@ -423,7 +570,7 @@ def uptime_grid(name, days=90):
     for i in range(days-1,-1,-1):
         day=(datetime.now()-dt.timedelta(days=i)).strftime("%Y-%m-%d")
         v=h.get(day)
-        if v is None: c="#21262d"; tip=f"{day}: нет данных"
+        if v is None: c="#2a1a3d"; tip=f"{day}: нет данных"
         else:
             pct=v["up"]/v["checks"]*100 if v["checks"] else 0
             c="#3fb950" if pct>=99 else "#e3b341" if pct>=90 else "#f85149"
@@ -438,7 +585,7 @@ def push_metrics(name, cpu, ram, disk=None):
         if v is not None:
             h[k].append(round(v,1)); h[k]=h[k][-60:]
 
-def sparkline(values, color="#58a6ff", h=32):
+def sparkline(values, color="#bf5fff", h=32):
     if not values: return '<span style="color:#6e7681;font-size:10px">—</span>'
     mx=max(values) if max(values)>0 else 1
     bars="".join(f'<div class="spark-bar" style="height:{max(1,int(v/mx*h))}px;background:{color}"></div>' for v in values[-40:])
@@ -636,14 +783,14 @@ if KEYS_STORE_AVAILABLE and not st.session_state.keys_unlocked:
             else:
                 clear_session()
         st.markdown("""<div style="max-width:360px;margin:80px auto;padding:32px;
-            background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center">
+            background:#150d24;border:1px solid #3d2459;border-radius:12px;text-align:center">
             <div style="font-size:28px;margin-bottom:8px">🕷️</div>
             <div style="font-size:16px;font-weight:600;color:#e6edf3">BlackArachnia</div>
             <div style="font-size:12px;color:#6e7681;margin-top:4px">Введи пароль для расшифровки ключей</div>
             </div>""", unsafe_allow_html=True)
         _,cc,_=st.columns([1,2,1])
         with cc:
-            pwd=st.text_input("",type="password",key="unlock_pwd",placeholder="Пароль...")
+            pwd=st.text_input("Ввод",type="password",key="unlock_pwd",placeholder="Пароль...")
             remember=st.checkbox("Запомнить меня на этом устройстве",value=True,key="chk_remember")
             if st.button("Войти",key="btn_unlock",use_container_width=True):
                 loaded=load_keys(pwd)
@@ -674,7 +821,9 @@ for k,v in [
     ("chat_messages",[]),("agent_token",""),("agent_ports",{}),("term_history",[]),
     ("term_cmd_history",[]),("audit_log",[]),("metrics_history",{}),("uptime_history",{}),
     ("incidents",[]),("thresholds",{}),("monitoring_active",True),("lang","ru"),
-    ("tg_token",""),("tg_chat_id",""),("tg_enabled",False),("tg_cooldown_min",15),("tg_last_sent",{}),
+    ("tg_token",os.getenv("TG_BOT_TOKEN","")),("tg_chat_id",os.getenv("TG_CHAT_ID","")),
+    ("tg_enabled",bool(os.getenv("TG_BOT_TOKEN","") and os.getenv("TG_CHAT_ID",""))),
+    ("tg_cooldown_min",15),("tg_last_sent",{}),
     ("system_prompt","Ты — ассистент мониторинга серверов BlackArachnia. Помогай кратко и по делу."),
     ("term_snippets",[
         {"name":"Disk","cmd":"df -h"},{"name":"Memory","cmd":"free -h"},
@@ -689,11 +838,11 @@ for k,v in [
 #  SIDEBAR
 # ═══════════════════════════════════════════════════════════════
 def _sb_label(txt, top=False):
-    border = "border-top:1px solid #21262d;padding-top:10px;" if top else ""
+    border = "border-top:1px solid #2a1a3d;padding-top:10px;" if top else ""
     st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:10px 0 4px;{border}">{txt}</div>', unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown("""<div style="padding:14px 0 10px;text-align:center;border-bottom:1px solid #21262d;margin-bottom:10px">
+    st.markdown("""<div style="padding:14px 0 10px;text-align:center;border-bottom:1px solid #2a1a3d;margin-bottom:10px">
       <div style="font-size:17px;font-weight:700;color:#e6edf3">🕷️ BlackArachnia</div>
       <div style="font-size:10px;color:#6e7681;margin-top:2px">SERVER MONITOR v3</div></div>""", unsafe_allow_html=True)
 
@@ -712,11 +861,11 @@ with st.sidebar:
         parts=[]
         if c: parts.append(f'<span style="color:#f85149">⬤ {c}</span>')
         if w: parts.append(f'<span style="color:#e3b341">⬤ {w}</span>')
-        st.markdown(f'<div style="font-size:11px;margin:4px 0 8px;padding:6px 8px;background:#1a1f27;border-radius:6px;border:1px solid #21262d">Инциденты: {" ".join(parts)}</div>',unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:11px;margin:4px 0 8px;padding:6px 8px;background:#1a1f27;border-radius:6px;border:1px solid #2a1a3d">Инциденты: {" ".join(parts)}</div>',unsafe_allow_html=True)
 
     _sb_label(T("environment"),top=True)
     env_list=list(st.session_state.servers_dict.keys())
-    env_choice=st.selectbox("",env_list,key="main_select",label_visibility="collapsed")
+    env_choice=st.selectbox("Выбор",env_list,key="main_select",label_visibility="collapsed")
     server_url=st.session_state.servers_dict.get(env_choice,"")
 
     _sb_label(T("api_keys"),top=True)
@@ -724,7 +873,7 @@ with st.sidebar:
         _cur=st.session_state.api_keys.get(_p,"")
         _col="#3fb950" if _cur else "#f85149"
         st.markdown(f'<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="font-size:11px;color:#8b949e">{_l}</span><span style="font-size:9px;color:{_col}">{"●" if _cur else "○"}</span></div>',unsafe_allow_html=True)
-        _new=st.text_input("",value=_cur,type="password",key=f"key_{_p}",label_visibility="collapsed",placeholder=f"{_l} key")
+        _new=st.text_input("Ввод",value=_cur,type="password",key=f"key_{_p}",label_visibility="collapsed",placeholder=f"{_l} key")
         if _new!=_cur: st.session_state.api_keys[_p]=_new
 
     if KEYS_STORE_AVAILABLE:
@@ -735,10 +884,12 @@ with st.sidebar:
                 elif not _pw: st.warning("Введи пароль")
 
     _sb_label(T("agent_token"),top=True)
-    _tok=st.text_input("",value=st.session_state.agent_token,type="password",key="tok_input",label_visibility="collapsed",placeholder="--token")
+    _tok=st.text_input("Ввод",value=st.session_state.agent_token,type="password",key="tok_input",label_visibility="collapsed",placeholder="--token")
     if _tok!=st.session_state.agent_token: st.session_state.agent_token=_tok
 
     _sb_label(T("tg_section"),top=True)
+    if os.getenv("TG_BOT_TOKEN") and os.getenv("TG_CHAT_ID"):
+        st.caption("✅ Загружено из .env")
     st.toggle(T("tg_enable"),value=st.session_state.tg_enabled,key="tg_toggle",
               on_change=lambda: st.session_state.update(tg_enabled=st.session_state.tg_toggle))
     if st.session_state.tg_enabled:
@@ -760,7 +911,7 @@ with st.sidebar:
         use_container_width=True,key="dl_report")
 
     _sb_label(T("sysprompt"),top=True)
-    st.session_state.system_prompt=st.text_area("",value=st.session_state.system_prompt,height=60,label_visibility="collapsed")
+    st.session_state.system_prompt=st.text_area("Текст",value=st.session_state.system_prompt,height=60,label_visibility="collapsed")
 
     if os.path.exists(_SESSION_FILE):
         _sb_label(T("session"),top=True)
@@ -775,7 +926,7 @@ _w=sum(1 for i in open_inc if i["severity"]=="warning")
 _badges=""
 if _c: _badges+=f'<span class="inc-badge inc-critical">{_c} CRIT</span> '
 if _w: _badges+=f'<span class="inc-badge inc-warning">{_w} WARN</span>'
-st.markdown(f"""<div style="background:#161b22;border-bottom:1px solid #21262d;padding:10px 20px;display:flex;align-items:center;justify-content:space-between">
+st.markdown(f"""<div style="background:#150d24;border-bottom:1px solid #2a1a3d;padding:10px 20px;display:flex;align-items:center;justify-content:space-between">
   <div style="display:flex;align-items:center;gap:12px">
     <span style="font-size:13px;font-weight:600;color:#e6edf3">🕷️ BlackArachnia</span>
     <span style="font-size:11px;color:#6e7681">{env_choice} · {server_url}</span> {_badges}</div>
@@ -788,12 +939,12 @@ tab_dash,tab_ov,tab_svc,tab_term,tab_ai,tab_inc,tab_logs,tab_add=tabs
 # ═══════════════════════════════════════════════════════════════
 #  FRAGMENTS
 # ═══════════════════════════════════════════════════════════════
-@st.fragment(run_every=3)
+@st.fragment(run_every=15)
 def frag_live(): refresh_servers(); render_dashboard()
 @st.fragment(run_every=None)
 def frag_paused(): render_dashboard()
 
-@st.fragment(run_every=3)
+@st.fragment(run_every=15)
 def frag_ov_live(): refresh_servers(); render_overview()
 @st.fragment(run_every=None)
 def frag_ov_paused(): render_overview()
@@ -805,15 +956,27 @@ def render_dashboard():
     total=len(servers)
     op=[i for i in st.session_state.incidents if i["status"]=="open"]
 
-    m1,m2,m3,m4=st.columns(4)
+    m1,m2,m3=st.columns(3)
     m1.metric("Серверов",str(total))
     m2.metric("Онлайн",f"{online}/{total}")
     m3.metric("Инцидентов",str(len(op)))
-    avg_cpu=[st.session_state.server_cache.get(n,{}).get("cpu") for n in servers]
-    avg_cpu=[c for c in avg_cpu if c is not None]
-    m4.metric("Ср. CPU",f"{sum(avg_cpu)/len(avg_cpu):.0f}%" if avg_cpu else "—")
+
+    # Средняя нагрузка CPU/RAM/Disk по всем серверам с агентом
+    def _avg(metric):
+        vals=[st.session_state.server_cache.get(n,{}).get(metric) for n in servers]
+        vals=[v for v in vals if v is not None]
+        return sum(vals)/len(vals) if vals else None
+    avg_cpu=_avg("cpu"); avg_ram=_avg("ram"); avg_disk=_avg("disk")
 
     st.markdown("<div style='height:10px'></div>",unsafe_allow_html=True)
+    st.markdown('<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">СРЕДНЯЯ НАГРУЗКА</div>',unsafe_allow_html=True)
+    g1,g2,g3=st.columns(3)
+    for col,label,val in [(g1,"CPU",avg_cpu),(g2,"RAM",avg_ram),(g3,"DISK",avg_disk)]:
+        with col:
+            if val is None:
+                st.markdown(f'<div class="res-card"><div class="res-label">{label}</div><div class="res-value" style="color:#6e7681">—</div><div style="font-size:10px;color:#6e7681">нет агента</div></div>',unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="res-card"><div class="res-label">{label}</div><div class="res-value" style="color:{_color(val)}">{val:.0f}%</div>{bar(val,_color(val))}</div>',unsafe_allow_html=True)
 
     # Карточки серверов
     for name,url in servers.items():
@@ -829,7 +992,7 @@ def render_dashboard():
                       f'<span style="color:{_color(cpu)}">CPU {cpu:.0f}%</span>'
                       f'<span style="color:{_color(ram)}">RAM {ram:.0f}%</span>'
                       f'<span style="color:{_color(disk or 0)}">Disk {disk or 0:.0f}%</span>'
-                      f'<span style="color:#58a6ff">↑{up:.0f} ↓{down:.0f} КБ/с</span></div>')
+                      f'<span style="color:#bf5fff">↑{up:.0f} ↓{down:.0f} КБ/с</span></div>')
             else:
                 metr='<div style="font-size:11px;color:#6e7681;margin-top:6px">агент не подключён</div>'
             extra=f'http {s["status_code"]} · {s["ip"]} · SSL {s["ssl_days"]}д'
@@ -842,7 +1005,7 @@ def render_dashboard():
             <span style="font-size:11px;color:#6e7681">{extra}</span></div>
           {metr}</div>""", unsafe_allow_html=True)
 
-    st.caption(f"{'🟢 авто-обновление 3с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"{'🟢 авто-обновление 15с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
 
 # ── ОБЗОР одного сервера ──────────────────────────────────────
 def render_overview():
@@ -900,7 +1063,7 @@ def render_overview():
     elif s["online"]:
         st.markdown(f'<div style="font-size:12px;color:#6e7681;padding:10px 0">{T("no_agent")}</div>',unsafe_allow_html=True)
 
-    st.caption(f"{'🟢 авто-обновление 3с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"{'🟢 авто-обновление 15с' if st.session_state.monitoring_active else '⏸ пауза'} · {datetime.now().strftime('%H:%M:%S')}")
 
 # ═══════════════════════════════════════════════════════════════
 #  TAB: ДАШБОРД
@@ -941,7 +1104,7 @@ with tab_svc:
         st.dataframe(rows,hide_index=True,width="stretch",
             column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["PID","Процесс","CPU %","RAM %"]})
 
-    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #21262d;padding-top:12px">{T("svc_title")}</div>',unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">{T("svc_title")}</div>',unsafe_allow_html=True)
     cf,cc=st.columns([2,3])
     with cf:
         if st.button(T("svc_refresh"),key="btn_svc"):
@@ -955,7 +1118,7 @@ with tab_svc:
                         svcs.append({"name":pp[0].replace(".service",""),"sub":pp[1] if len(pp)>1 else "?"})
                 st.session_state["svc_list"]=svcs; st.session_state.pop("svc_err",None)
     with cc:
-        custom=st.text_input("",placeholder="nginx, docker, postgresql...",key="custom_svc",label_visibility="collapsed")
+        custom=st.text_input("Ввод",placeholder="nginx, docker, postgresql...",key="custom_svc",label_visibility="collapsed")
     if st.session_state.get("svc_err"): st.error(st.session_state["svc_err"])
 
     def _svc(action,svc):
@@ -980,7 +1143,7 @@ with tab_svc:
         if rk in st.session_state:
             out=st.session_state[rk]
             col="#3fb950" if "active" in out else "#f85149" if "failed" in out.lower() else "#e6edf3"
-            st.markdown(f'<pre style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:12px;color:{col};white-space:pre-wrap;max-height:200px;overflow-y:auto">{out}</pre>',unsafe_allow_html=True)
+            st.markdown(f'<pre style="background:#0a0612;border:1px solid #2a1a3d;border-radius:6px;padding:10px;font-size:12px;color:{col};white-space:pre-wrap;max-height:200px;overflow-y:auto">{out}</pre>',unsafe_allow_html=True)
 
     if st.session_state.get("svc_list"):
         for svc in st.session_state["svc_list"]:
@@ -991,9 +1154,9 @@ with tab_svc:
             if c3.button("⏹",key=f"qx_{svc['name']}"): _svc("stop",svc["name"]); st.rerun()
             if c4.button("↺",key=f"qr_{svc['name']}"): _svc("restart",svc["name"]); st.rerun()
 
-    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #21262d;padding-top:12px">{T("log_stream")}</div>',unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">{T("log_stream")}</div>',unsafe_allow_html=True)
     l1,l2,l3=st.columns([3,1,1])
-    with l1: logsrc=st.text_input("",value="/var/log/syslog",key="logsrc",label_visibility="collapsed")
+    with l1: logsrc=st.text_input("Ввод",value="/var/log/syslog",key="logsrc",label_visibility="collapsed")
     with l2: loglines=st.number_input("Строк",10,500,50,10,key="loglines")
     with l3: getlog=st.button(T("log_get"),key="btn_log",use_container_width=True)
     if getlog:
@@ -1002,7 +1165,7 @@ with tab_svc:
         else:
             out=res.get("stdout","").strip()
             add_log(f"[log] tail {loglines} {logsrc}")
-            st.markdown(f'<pre style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:400px;overflow-y:auto">{out or "(пусто)"}</pre>',unsafe_allow_html=True)
+            st.markdown(f'<pre style="background:#0a0612;border:1px solid #2a1a3d;border-radius:8px;padding:14px;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:400px;overflow-y:auto">{out or "(пусто)"}</pre>',unsafe_allow_html=True)
     st.markdown("</div>",unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════
@@ -1035,13 +1198,13 @@ with tab_term:
                 ce=e["cmd"].replace("<","&lt;").replace(">","&gt;")
                 if e["res"].get("error"): oe=e["res"]["error"].replace("<","&lt;").replace(">","&gt;"); oc="#ff7b72"
                 else: oe=e["res"].get("stdout","").replace("<","&lt;").replace(">","&gt;"); oc="#e6edf3" if e["res"].get("returncode",0)==0 else "#e3b341"
-                parts.append(f'<div style="margin-bottom:10px"><div style="font-size:11px;margin-bottom:2px"><span style="color:#6e7681">[{e["ts"]}]</span> <span style="color:#bc8cff">{host}</span> <span style="color:#6e7681">$</span> <span style="color:#e6edf3">{ce}</span></div><pre style="margin:0;padding:8px 12px;background:#0d1117;border-radius:4px;border-left:2px solid #21262d;color:{oc};font-size:11px;white-space:pre-wrap;max-height:280px;overflow-y:auto">{oe.strip() or "(нет вывода)"}</pre></div>')
-            st.markdown('<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px;max-height:440px;overflow-y:auto">'+"".join(parts)+'</div>',unsafe_allow_html=True)
+                parts.append(f'<div style="margin-bottom:10px"><div style="font-size:11px;margin-bottom:2px"><span style="color:#6e7681">[{e["ts"]}]</span> <span style="color:#bc8cff">{host}</span> <span style="color:#6e7681">$</span> <span style="color:#e6edf3">{ce}</span></div><pre style="margin:0;padding:8px 12px;background:#0a0612;border-radius:4px;border-left:2px solid #2a1a3d;color:{oc};font-size:11px;white-space:pre-wrap;max-height:280px;overflow-y:auto">{oe.strip() or "(нет вывода)"}</pre></div>')
+            st.markdown('<div style="background:#0a0612;border:1px solid #2a1a3d;border-radius:8px;padding:14px;max-height:440px;overflow-y:auto">'+"".join(parts)+'</div>',unsafe_allow_html=True)
         else:
-            st.markdown('<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:40px;text-align:center"><div style="font-size:12px;color:#30363d">🕷️ BlackArachnia Terminal</div></div>',unsafe_allow_html=True)
+            st.markdown('<div style="background:#0a0612;border:1px solid #2a1a3d;border-radius:8px;padding:40px;text-align:center"><div style="font-size:12px;color:#3d2459">🕷️ BlackArachnia Terminal</div></div>',unsafe_allow_html=True)
         st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
         i1,i2=st.columns([5,1])
-        with i1: cmdin=st.text_input("",value=prefill,placeholder=T("cmd_ph"),key="term_cmd",label_visibility="collapsed")
+        with i1: cmdin=st.text_input("Ввод",value=prefill,placeholder=T("cmd_ph"),key="term_cmd",label_visibility="collapsed")
         with i2: runb=st.button(T("run"),key="term_run",use_container_width=True)
         if runb and cmdin.strip():
             c=cmdin.strip(); hh=st.session_state.term_cmd_history
@@ -1091,7 +1254,7 @@ with tab_ai:
     st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
     a1,a2,a3=st.columns([3,1,1])
     with a1:
-        mode=st.selectbox("",["auto","groq","gemini","openai"],
+        mode=st.selectbox("Выбор",["auto","groq","gemini","openai"],
             format_func=lambda x:{"auto":"Auto Router","groq":"Groq","gemini":"Gemini Flash","openai":"GPT-4o mini"}[x],
             label_visibility="collapsed")
     with a2:
@@ -1163,8 +1326,8 @@ with tab_inc:
     c4.metric(T("inc_total"),str(len(alli)))
     st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
     f1,f2,f3=st.columns([2,2,1])
-    fs=f1.selectbox("",["all","open","closed"],format_func=lambda x:{"all":"Все","open":"Открытые","closed":"Закрытые"}[x],key="if_s",label_visibility="collapsed")
-    fv=f2.selectbox("",["all","critical","warning"],format_func=lambda x:{"all":"Все","critical":"Критичные","warning":"Warning"}[x],key="if_v",label_visibility="collapsed")
+    fs=f1.selectbox("Выбор",["all","open","closed"],format_func=lambda x:{"all":"Все","open":"Открытые","closed":"Закрытые"}[x],key="if_s",label_visibility="collapsed")
+    fv=f2.selectbox("Выбор",["all","critical","warning"],format_func=lambda x:{"all":"Все","critical":"Критичные","warning":"Warning"}[x],key="if_v",label_visibility="collapsed")
     if f3.button(T("clear_closed"),key="clr_closed",use_container_width=True):
         st.session_state.incidents=[i for i in alli if i["status"]!="closed"]; st.rerun()
     flt=[i for i in reversed(alli) if (fs=="all" or i["status"]==fs) and (fv=="all" or i["severity"]==fv)]
@@ -1173,7 +1336,7 @@ with tab_inc:
         for inc in flt[:100]:
             bc="inc-critical" if inc["severity"]=="critical" else "inc-warning"
             sc="#3fb950" if inc["status"]=="closed" else "#f85149" if inc["severity"]=="critical" else "#e3b341"
-            st.markdown(f'<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:10px"><span class="inc-badge {bc}">{inc["severity"].upper()}</span><div><div style="font-size:12px;color:#e6edf3;font-weight:500">{inc["server"]} — {inc["msg"]}</div><div style="font-size:10px;color:#6e7681;margin-top:2px">#{inc["id"]} · {inc["opened"]}{" · закрыт "+inc["closed"] if inc["closed"] else ""}</div></div></div><span style="font-size:11px;color:{sc}">{inc["status"]}</span></div>',unsafe_allow_html=True)
+            st.markdown(f'<div style="background:#150d24;border:1px solid #2a1a3d;border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:10px"><span class="inc-badge {bc}">{inc["severity"].upper()}</span><div><div style="font-size:12px;color:#e6edf3;font-weight:500">{inc["server"]} — {inc["msg"]}</div><div style="font-size:10px;color:#6e7681;margin-top:2px">#{inc["id"]} · {inc["opened"]}{" · закрыт "+inc["closed"] if inc["closed"] else ""}</div></div></div><span style="font-size:11px;color:{sc}">{inc["status"]}</span></div>',unsafe_allow_html=True)
             if inc["status"]=="open":
                 if st.button(f"{T('resolve')} #{inc['id']}",key=f"res_{inc['id']}"):
                     inc["status"]="closed"; inc["closed"]=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1186,7 +1349,7 @@ with tab_inc:
 with tab_logs:
     st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
     l1,l2=st.columns([4,1])
-    with l1: lf=st.text_input("",placeholder=T("filter_ph"),key="log_filter",label_visibility="collapsed")
+    with l1: lf=st.text_input("Ввод",placeholder=T("filter_ph"),key="log_filter",label_visibility="collapsed")
     with l2:
         if st.button(T("clear"),key="clr_logs",use_container_width=True): st.session_state.logs=["[info] очищено."]; st.rerun()
     ls=st.session_state.logs[::-1]
@@ -1201,7 +1364,7 @@ with tab_logs:
 with tab_add:
     st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
     st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:12px">{T("add_title")}</div>',unsafe_allow_html=True)
-    st.markdown('<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#8b949e;line-height:1.7">Для CPU/RAM запусти <code style="color:#58a6ff">agent.py</code> на сервере, порт <b style="color:#e6edf3">9999</b>.</div>',unsafe_allow_html=True)
+    st.markdown('<div style="background:#150d24;border:1px solid #2a1a3d;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#8b949e;line-height:1.7">Для CPU/RAM запусти <code style="color:#bf5fff">agent.py</code> на сервере, порт <b style="color:#e6edf3">9999</b>.</div>',unsafe_allow_html=True)
     i1,i2=st.columns(2)
     with i1:
         st.markdown("**1. Скопируй**"); st.code("scp agent.py user@server:~/",language="bash")

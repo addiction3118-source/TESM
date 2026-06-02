@@ -6,3 +6,4 @@
 temp_servers.json
 __pycache__/
 *.pyc
+.env.example
