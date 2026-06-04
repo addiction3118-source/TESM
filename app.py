@@ -2,6 +2,7 @@ import streamlit as st
 import time, re, json, os, urllib.request, urllib.error, socket, ssl
 import datetime as dt
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 # ── Загрузка .env (ключи API + Telegram) ──────────────────────
 def _load_dotenv():
@@ -367,6 +368,55 @@ hr { border-color:#2a1a3d!important; }
 """, unsafe_allow_html=True)
 
 st.markdown("""
+<style>
+/* ════════ НЕОН-GLASS PASS ════════ */
+/* Aurora — как фиксированный фон самого .stApp (не перекрывает контент,
+   не ломает скролл сайдбара) */
+.stApp{
+  background:
+    radial-gradient(42vw 42vw at 10% 4%,  rgba(123,47,222,.30), transparent 60%),
+    radial-gradient(48vw 48vw at 92% 96%, rgba(34,211,238,.15), transparent 62%),
+    radial-gradient(34vw 34vw at 84% 6%,  rgba(191,95,255,.18), transparent 60%),
+    #0a0612 !important;
+  background-attachment:fixed !important;
+}
+/* Верхняя полоса — два акцента */
+.stApp::before{background:linear-gradient(90deg,transparent,#bf5fff,#22d3ee,#bf5fff,transparent)!important;}
+
+/* Стеклянные карточки (glassmorphism) */
+[data-testid="stMetric"], .res-card, .dash-card{
+  background:linear-gradient(135deg, rgba(26,15,46,.62), rgba(16,9,28,.62))!important;
+  backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);
+  border:1px solid rgba(191,95,255,.30)!important;
+  box-shadow:0 10px 32px rgba(0,0,0,.38), 0 0 0 1px rgba(191,95,255,.07),
+             inset 0 1px 0 rgba(255,255,255,.05)!important;
+}
+[data-testid="stMetric"]:hover, .res-card:hover, .dash-card:hover{
+  border-color:rgba(34,211,238,.55)!important;
+  box-shadow:0 14px 40px rgba(0,0,0,.45), 0 0 22px rgba(34,211,238,.18)!important;
+}
+[data-testid="stMetricValue"]{font-size:26px!important;
+  background:linear-gradient(90deg,#d9a6ff,#22d3ee);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;text-shadow:none!important;}
+
+/* Радиальные гейджи */
+.gauge-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px!important;}
+.gauge{position:relative;display:flex;align-items:center;justify-content:center;}
+.gauge svg{display:block;}
+.gauge-label{font-size:10px;color:#8b949e;letter-spacing:.1em;text-transform:uppercase;}
+.gauge-empty{width:104px;height:104px;border-radius:50%;border:8px solid #2a1a3d;
+  display:flex;align-items:center;justify-content:center;}
+.gauge-num{font-size:22px;color:#6e7681;font-family:'JetBrains Mono',monospace;}
+
+/* Табы-пилюли с циан-подсветкой активной */
+.stTabs [data-baseweb="tab"]{border-radius:8px 8px 0 0!important;}
+.stTabs [aria-selected="true"]{
+  background:linear-gradient(180deg, rgba(191,95,255,.14), transparent)!important;
+  border-bottom:2px solid #22d3ee!important;color:#d9a6ff!important;}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
 <div class="spider-wrap">
   <svg style="position:absolute;top:0;right:0;width:160px;height:160px" viewBox="0 0 160 160">
     <line x1="160" y1="0" x2="0" y2="0" stroke="#bf5fff" stroke-width="0.5" opacity="0.5"/>
@@ -587,14 +637,49 @@ def push_metrics(name, cpu, ram, disk=None):
 
 def sparkline(values, color="#bf5fff", h=32):
     if not values: return '<span style="color:#6e7681;font-size:10px">—</span>'
-    mx=max(values) if max(values)>0 else 1
-    bars="".join(f'<div class="spark-bar" style="height:{max(1,int(v/mx*h))}px;background:{color}"></div>' for v in values[-40:])
-    last=values[-1]; col=_color(last)
-    return (f'<div style="display:flex;align-items:center;gap:8px"><div class="spark-wrap">{bars}</div>'
+    vals=values[-40:]
+    mx=max(vals) if max(vals)>0 else 1
+    n=len(vals); w=120
+    step=w/max(1,n-1)
+    pts=[(i*step, h-(v/mx*(h-3))-1.5) for i,v in enumerate(vals)]
+    poly=" ".join(f"{x:.1f},{y:.1f}" for x,y in pts)
+    area=f"0,{h} "+poly+f" {w},{h}"
+    last=vals[-1]; col=_color(last)
+    uid=str(abs(hash((tuple(vals), color)))%99999)
+    svg=(f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" preserveAspectRatio="none">'
+         f'<defs><linearGradient id="sp{uid}" x1="0" y1="0" x2="0" y2="1">'
+         f'<stop offset="0%" stop-color="{col}" stop-opacity="0.5"/>'
+         f'<stop offset="100%" stop-color="{col}" stop-opacity="0"/></linearGradient></defs>'
+         f'<polygon points="{area}" fill="url(#sp{uid})"/>'
+         f'<polyline points="{poly}" fill="none" stroke="{col}" stroke-width="1.6" '
+         f'stroke-linejoin="round" style="filter:drop-shadow(0 0 3px {col})"/></svg>')
+    return (f'<div style="display:flex;align-items:center;gap:8px">{svg}'
             f'<span style="font-size:11px;font-weight:600;color:{col};font-family:JetBrains Mono">{last:.0f}%</span></div>')
 
 def bar(pct, color):
     return f'<div class="nd-bar-wrap"><div class="nd-bar-fill" style="width:{min(pct,100):.0f}%;background:{color}"></div></div>'
+
+def radial_gauge(pct, label, color, size=108):
+    """Радиальный гейдж (SVG-кольцо) с градиентом и свечением."""
+    import math
+    pct=max(0.0, min(100.0, float(pct)))
+    r=42.0; circ=2*math.pi*r
+    off=circ*(1-pct/100.0)
+    uid=re.sub(r'\W','',label) or 'g'
+    return (
+        f'<div class="gauge">'
+        f'<svg viewBox="0 0 100 100" width="{size}" height="{size}">'
+        f'<defs><linearGradient id="gg{uid}" x1="0" y1="0" x2="1" y2="1">'
+        f'<stop offset="0%" stop-color="{color}"/><stop offset="100%" stop-color="#22d3ee"/></linearGradient></defs>'
+        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="#2a1a3d" stroke-width="8"/>'
+        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="url(#gg{uid})" stroke-width="8" '
+        f'stroke-linecap="round" stroke-dasharray="{circ:.1f}" stroke-dashoffset="{off:.1f}" '
+        f'transform="rotate(-90 50 50)" style="filter:drop-shadow(0 0 5px {color});'
+        f'transition:stroke-dashoffset .6s ease"/>'
+        f'<text x="50" y="50" text-anchor="middle" dominant-baseline="central" fill="#e6edf3" '
+        f'font-size="21" font-family="JetBrains Mono,monospace" font-weight="600">{pct:.0f}</text>'
+        f'</svg><div class="gauge-label">{label}</div></div>'
+    )
 
 # ── Проверка сервера ──────────────────────────────────────────
 def check_server(url):
@@ -642,34 +727,55 @@ def exec_remote(host, cmd, port=9999, token=""):
         except Exception: return {"error":f"HTTP {e.code}"}
     except Exception as e: return {"error":str(e)}
 
+def _probe_server(name, url, port):
+    """Чистая функция (не трогает st.session_state) — безопасна для потоков."""
+    r = check_server(url)
+    if r["online"]:
+        host = url.replace("https://","").replace("http://","").split("/")[0]
+        m = fetch_agent(host, port)
+        r["cpu"]=m.get("cpu_percent"); r["ram"]=m.get("ram_percent")
+        r["ram_used"]=m.get("ram_used_gb"); r["ram_total"]=m.get("ram_total_gb")
+        r["disk"]=m.get("disk_percent"); r["disk_used"]=m.get("disk_used_gb")
+        r["disk_total"]=m.get("disk_total_gb")
+        r["net_up"]=m.get("net_up_kbps"); r["net_down"]=m.get("net_down_kbps")
+        r["cores"]=m.get("cpu_cores"); r["load"]=m.get("load_avg")
+        r["server_uptime"]=m.get("uptime_sec")  # реальный аптайм сервера
+    return name, r
+
 def refresh_servers():
-    for name,url in st.session_state.servers_dict.items():
-        r=check_server(url)
-        prev=st.session_state.server_cache.get(name,{})
+    # Серверы опрашиваются параллельно (сеть — самое медленное место).
+    # Сетевые вызовы — в потоках, запись в session_state — только в основном потоке.
+    items = list(st.session_state.servers_dict.items())
+    if not items:
+        return
+    ports = {n: st.session_state.agent_ports.get(n, 9999) for n, _ in items}
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(items)))) as ex:
+        for fut in [ex.submit(_probe_server, n, u, ports[n]) for n, u in items]:
+            try:
+                n, r = fut.result()
+                results[n] = r
+            except Exception:
+                pass
+    for name, url in items:
+        r = results.get(name)
+        if r is None:
+            continue
+        prev = st.session_state.server_cache.get(name, {})
         if r["online"] and not prev.get("online"):
-            st.session_state.uptime_start[name]=time.time()
+            st.session_state.uptime_start[name] = time.time()
         if not r["online"]:
-            st.session_state.uptime_start.pop(name,None)
-        if r["online"]:
-            host=url.replace("https://","").replace("http://","").split("/")[0]
-            port=st.session_state.agent_ports.get(name,9999)
-            m=fetch_agent(host,port)
-            r["cpu"]=m.get("cpu_percent"); r["ram"]=m.get("ram_percent")
-            r["ram_used"]=m.get("ram_used_gb"); r["ram_total"]=m.get("ram_total_gb")
-            r["disk"]=m.get("disk_percent"); r["disk_used"]=m.get("disk_used_gb")
-            r["disk_total"]=m.get("disk_total_gb")
-            r["net_up"]=m.get("net_up_kbps"); r["net_down"]=m.get("net_down_kbps")
-            r["cores"]=m.get("cpu_cores"); r["load"]=m.get("load_avg")
-        st.session_state.server_cache[name]=r
-        push_metrics(name,r.get("cpu"),r.get("ram"),r.get("disk"))
-        push_uptime(name,r["online"])
-        check_thresholds(name,r)
+            st.session_state.uptime_start.pop(name, None)
+        st.session_state.server_cache[name] = r
+        push_metrics(name, r.get("cpu"), r.get("ram"), r.get("disk"))
+        push_uptime(name, r["online"])
+        check_thresholds(name, r)
 
 # ═══════════════════════════════════════════════════════════════
 #  LLM-РОУТЕР (с памятью диалога)
 # ═══════════════════════════════════════════════════════════════
 ROUTING = {
- "code":("groq","mixtral-8x7b-32768","Groq/Mixtral"),
+ "code":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),   # mixtral-8x7b снят в Groq
  "reasoning":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
  "long":("gemini","gemini-2.0-flash","Gemini Flash"),
  "general":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
@@ -974,9 +1080,9 @@ def render_dashboard():
     for col,label,val in [(g1,"CPU",avg_cpu),(g2,"RAM",avg_ram),(g3,"DISK",avg_disk)]:
         with col:
             if val is None:
-                st.markdown(f'<div class="res-card"><div class="res-label">{label}</div><div class="res-value" style="color:#6e7681">—</div><div style="font-size:10px;color:#6e7681">нет агента</div></div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="res-card gauge-card"><div class="gauge-empty"><div class="gauge-num">—</div></div><div class="gauge-label">{label}</div><div style="font-size:10px;color:#6e7681">нет агента</div></div>',unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="res-card"><div class="res-label">{label}</div><div class="res-value" style="color:{_color(val)}">{val:.0f}%</div>{bar(val,_color(val))}</div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="res-card gauge-card">{radial_gauge(val,label,_color(val))}</div>',unsafe_allow_html=True)
 
     # Карточки серверов
     for name,url in servers.items():
@@ -1018,13 +1124,18 @@ def render_overview():
             if s["online"]: st.session_state.uptime_start[env]=time.time()
             st.session_state.server_cache[env]=s
             push_uptime(env,s["online"]); check_thresholds(env,s)
-    up=time.time()-st.session_state.uptime_start.get(env,time.time())
+    # Аптайм: реальный из агента (server_uptime), иначе — с момента обнаружения
+    if s.get("server_uptime") is not None:
+        up = s["server_uptime"]; up_real = True
+    else:
+        up = time.time()-st.session_state.uptime_start.get(env,time.time()); up_real = False
     h=st.session_state.metrics_history.get(env,{"cpu":[],"ram":[],"disk":[]})
     upt=get_uptime_pct(env)
 
     m1,m2,m3,m4,m5=st.columns(5)
     m1.metric(T("status"),T("online").upper() if s["online"] else T("offline").upper())
-    m2.metric(T("uptime"),fmt_uptime(up) if s["online"] else "—")
+    m2.metric(T("uptime"),fmt_uptime(up) if s["online"] else "—",
+              delta=None if up_real else "с запуска")
     m3.metric(T("http"),str(s["status_code"]))
     m4.metric(T("ssl"),f"{s['ssl_days']}d" if s["online"] else "—",delta="⚠ скоро" if s.get("ssl_days",999)<30 else None)
     m5.metric(T("uptime90"),f"{upt:.1f}%" if upt is not None else "—")

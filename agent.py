@@ -10,11 +10,13 @@
 # Запуск:     python agent.py --token YOUR_SECRET
 # Фон:        nohup python agent.py --token SECRET &
 # ─────────────────────────────────────────────────────────────
-import json, sys, os, time, subprocess, psutil
+import json, sys, os, time, subprocess, hmac, psutil
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 PORT  = 9999
 _BOOT = psutil.boot_time()
+_DISK_ROOT = "C:\\" if os.name == "nt" else "/"   # корень диска для метрик (кроссплатформенно)
+_MAX_BODY  = 64 * 1024                              # лимит тела POST (защита от DoS)
 _net_prev = {"t": time.time(), "sent": 0, "recv": 0}
 
 
@@ -56,7 +58,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         if self.path == "/metrics":
             up_kbps, down_kbps = get_network_speed()
             vm = psutil.virtual_memory()
-            du = psutil.disk_usage("/")
+            du = psutil.disk_usage(_DISK_ROOT)
             self._send_json({
                 "cpu_percent":   psutil.cpu_percent(interval=0.5),
                 "cpu_cores":     psutil.cpu_count(),
@@ -94,11 +96,18 @@ class AgentHandler(BaseHTTPRequestHandler):
         if self.path != "/exec":
             self._send_json({"error": "not found"}, 404); return
         length = int(self.headers.get("Content-Length", 0))
+        if length <= 0 or length > _MAX_BODY:
+            self._send_json({"error": "invalid body size"}, 400); return
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
             self._send_json({"error": "invalid json"}, 400); return
-        if AGENT_TOKEN and body.get("token") != AGENT_TOKEN:
+        # /exec ТРЕБУЕТ токен. Без заданного токена удалённое выполнение команд
+        # отключено (раньше при пустом токене /exec был открыт для всех — это RCE).
+        if not AGENT_TOKEN:
+            self._send_json({"error": "/exec отключён: запустите агент с --token SECRET"}, 403); return
+        # Сравнение токена в постоянном времени — защита от тайминг-атаки.
+        if not hmac.compare_digest(str(body.get("token", "")), AGENT_TOKEN):
             self._send_json({"error": "unauthorized"}, 403); return
         cmd = body.get("cmd", "").strip()
         if not cmd:
@@ -131,7 +140,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     if not AGENT_TOKEN:
-        print("[agent] WARNING: токен не задан, /exec открыт. Запусти: python agent.py --token SECRET")
+        print("[agent] WARNING: токен не задан → /exec ОТКЛЮЧЁН. Для команд: python agent.py --token SECRET")
     else:
         print("[agent] token set, /exec protected")
     print(f"[agent] BlackArachnia agent on port {PORT}")

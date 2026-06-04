@@ -1,0 +1,156 @@
+# BlackArachnia — панель мониторинга серверов с LLM-роутером
+
+Контекст проекта для Claude Code. Читай этот файл перед любыми изменениями.
+
+## О проекте
+
+BlackArachnia — веб-панель мониторинга серверов на Python/Streamlit со встроенным
+маршрутизатором запросов к большим языковым моделям (LLM), Telegram-ботом, системой
+инцидентов и шифрованием ключей доступа. Тёмный неоновый фиолетовый дизайн.
+
+Автор: Чуприков Никита, группа ИС 2-7, ГБПОУ МО «Луховицкий авиационный техникум».
+Проект разработан в рамках учебной и производственной практики.
+
+## Технологический стек
+
+- **Python 3.10+** (разрабатывалось на 3.14, но совместимо с 3.10+)
+- **Streamlit 1.33+** — веб-фреймворк (весь UI на Python, без JS)
+- **psutil** — сбор системных метрик (CPU/RAM/Disk/Network)
+- **cryptography** — шифрование ключей (AES-256-GCM + PBKDF2)
+- **groq / google-generativeai / openai** — SDK языковых моделей
+- **Telegram Bot API** — оповещения и бот команд (через urllib, без сторонних либ)
+- **Git + GitHub** — контроль версий
+
+Язык интерфейса: русский (основной) + английский. UI-первый русский.
+
+## Структура файлов
+
+```
+blackarachnia/
+├── run.py            # точка запуска: проверка зависимостей, запуск agent+bot+streamlit
+├── app.py            # основной модуль (~1400 строк): весь веб-интерфейс, LLM-роутер, инциденты
+├── agent.py          # HTTP-агент на наблюдаемом сервере (порт 9999)
+├── keys_store.py     # шифрование API-ключей AES-256-GCM
+├── tg_bot.py         # Telegram-бот команд (polling)
+├── .env              # СЕКРЕТЫ: ключи API и токены (НЕ коммитить!)
+├── .env.example      # шаблон .env
+├── .gitignore
+├── temp_servers.json # список серверов (создаётся приложением)
+└── .keys.enc         # зашифрованные ключи (создаётся приложением)
+```
+
+## Как запускать
+
+```bash
+python run.py
+```
+run.py делает: быстрая проверка зависимостей через importlib (без переустановки если
+всё есть) → запуск agent.py в фоне (порт 9999) → запуск tg_bot.py если в .env есть
+TG_BOT_TOKEN → запуск Streamlit на порту 8501 → открытие браузера.
+
+ВАЖНО: запускать именно `python run.py`, а не `streamlit run app.py` напрямую —
+иначе не стартуют агент и бот.
+
+## Описание модулей
+
+### run.py
+- `check_and_install()` — проверяет пакеты через `importlib.util.find_spec`, ставит только отсутствующие
+- `start_agent()` — запускает agent.py в фоне, ждёт открытия порта 9999
+- `start_tg_bot()` — запускает tg_bot.py если задан TG_BOT_TOKEN в .env
+- `open_browser()` — открывает localhost:8501 когда Streamlit готов
+- `load_env()` — читает .env в os.environ
+
+### app.py (основной модуль)
+Структура по разделам (CSS → i18n → helpers → LLM → login → session_state → sidebar → header → вкладки):
+- **Тёмная неоновая тема** через большой CSS-блок (фиолетовый #bf5fff, фон #0a0612, карточки #150d24)
+- **i18n**: словарь `TR` с ключами ru/en, функция `T(key)`
+- **Автовход**: `save_session()/load_session()/clear_session()` — пароль шифруется XOR с machine-id, хранится в `.ba_session`. При запуске автоматически расшифровывает ключи без повторного ввода пароля
+- **Проверка серверов**: `check_server(url)` — HTTPS, при неудаче HTTP fallback. Возвращает online/код/IP/SSL-дни
+- **Агент**: `fetch_agent(host,port,path)` — GET метрики/процессы; `exec_remote()` — POST команды
+- **Метрики**: `refresh_servers()` собирает всё, `push_metrics()` копит историю для sparkline, `push_uptime()` — историю доступности за 90 дней
+- **Инциденты**: `check_thresholds()` — создаёт/закрывает инциденты при превышении порогов CPU/RAM/Disk/SSL
+- **Telegram**: `send_telegram(text,severity)` — БЕЗ parse_mode (Markdown ломается на спецсимволах), `tg_alert()` — с антиспамом (кулдаун)
+- **LLM-роутер**: `classify(prompt)` определяет тип задачи → `route_and_call()` выбирает провайдера. `_msgs()` собирает последние 10 сообщений = ПАМЯТЬ ДИАЛОГА
+- **Фрагменты**: `@st.fragment(run_every=15)` для автообновления без перезагрузки страницы. Есть live (run_every=15) и paused (None) версии
+- **Вкладки**: Дашборд (все серверы сразу), Сервер (детально один), Службы (systemd + топ процессов), Терминал (команды+история+сниппеты+аудит), ИИ Чат (с памятью), Инциденты, Логи, Добавить
+
+### agent.py (на наблюдаемом сервере)
+HTTP-сервер на stdlib (без зависимостей кроме psutil), порт 9999. Эндпоинты:
+- `GET /metrics` — cpu_percent, cpu_cores, ram_percent, ram_used/total_gb, disk_*, net_up/down_kbps, uptime_sec, load_avg
+- `GET /processes` — топ-15 процессов по CPU (pid, name, cpu, ram)
+- `GET /ping` — проверка живости
+- `POST /exec` — выполнить команду {cmd, token}. Токен-аутентификация + блэклист опасных команд (rm -rf /, mkfs, shutdown...)
+Запуск: `python agent.py --token СЕКРЕТ`
+Сетевая скорость считается через разницу psutil.net_io_counters() между запросами.
+
+### keys_store.py
+- `save_keys(keys, password)` — AES-256-GCM, PBKDF2-HMAC-SHA256 200000 итераций, формат base64(salt+nonce+ciphertext) в .keys.enc
+- `load_keys(password)` — расшифровка, None при неверном пароле
+- `keys_file_exists()`, `delete_keys()`
+
+### tg_bot.py (Telegram-бот команд, polling)
+Читает .env (TG_BOT_TOKEN, TG_ALLOWED_CHAT) + temp_servers.json + .agent_ports.json.
+Команды: /start /help /status (все серверы) /metrics <имя> /incidents /ai <вопрос>.
+TG_ALLOWED_CHAT ограничивает доступ одним chat_id. Без сторонних библиотек, чистый urllib.
+
+## LLM-роутер — детали
+
+Маршрутизация по типу задачи (функция classify):
+- код (python/sql/bash) → Groq / Mixtral-8x7b
+- рассуждение (почему/объясни/анализ) → Groq / Llama 3.3 70B
+- длинный контекст (>16000) → Gemini 2.0 Flash
+- общее → Groq / Llama 3.3 70B
+
+ВАЖНО про название: используется **Groq** (платформа инференса, console.groq.com),
+НЕ Grok (бот xAI). В коде `from groq import Groq`. В отчётах формулировка
+"языковая модель Llama 3 (через API Groq)".
+
+Поддержка истории диалога: последние 10 сообщений передаются в каждый запрос,
+для Gemini через start_chat(history=...).
+
+## .env (секреты)
+
+```
+GROQ_API_KEY=gsk_...
+GEMINI_API_KEY=...
+OPENAI_API_KEY=sk-...
+TG_BOT_TOKEN=7891234567:AAF-...   # токен бота от @BotFather
+TG_CHAT_ID=791234567              # личный chat_id для алертов (от @userinfobot)
+TG_ALLOWED_CHAT=791234567         # кто может управлять ботом команд
+AGENT_TOKEN=секрет                # токен для agent.py /exec
+```
+
+## Безопасность (важно при работе с кодом)
+
+- НИКОГДА не коммить .env, .keys.enc, .ba_session, .agent_ports.json, temp_servers.json
+- Все они должны быть в .gitignore
+- API-ключи только в зашифрованном виде (.keys.enc) или в .env
+- Команды на /exec проверяются токеном + блэклист опасных
+- send_telegram НЕ использует parse_mode=Markdown (ломается на кириллице/спецсимволах)
+
+## Известные подводные камни (на чём уже спотыкались)
+
+1. **Запуск**: только `python run.py`. Через `streamlit run app.py` агент и бот не стартуют.
+2. **tg_bot.py vs tgbot.py**: run.py ищет файл `tg_bot.py` (с подчёркиванием). Имя должно совпадать.
+3. **Отступы в run.py**: при ручном редактировании легко сломать отступ → IndentationError, и весь запуск падает молча до старта бота.
+4. **Telegram 403 "bot can't send messages to the bot"**: в Chat ID вписан id бота вместо личного. Нужен личный id из @userinfobot, и боту надо написать /start первым.
+5. **Streamlit label warnings**: у всех text_input/selectbox label должен быть непустым (даже с label_visibility="collapsed"). Пустой "" даёт предупреждения.
+6. **Python 3.14**: проект работает, но это очень свежая версия — иногда библиотеки ведут себя нестандартно. Стабильнее 3.11-3.12.
+7. **Sidebar статичный**: кнопка сворачивания скрыта через CSS [data-testid="stSidebarCollapsedControl"]{display:none}, ширина зафиксирована.
+8. **Тема только тёмная**: переключатель светлой темы убран (светлая через CSS-инверсию искажала цвета).
+
+## Стиль кода
+
+- Русские строки в UI через словарь TR + T(key), не хардкодить
+- Цвета статусов: зелёный #3fb950 (online/ok), красный #f85149 (offline/critical), жёлтый #e3b341 (warning)
+- Акцент неоновый фиолетовый #bf5fff
+- Метрики моноширинным шрифтом (JetBrains Mono)
+- При добавлении сервера сохранять temp_servers.json и .agent_ports.json (чтобы бот видел)
+
+## Что можно улучшить (идеи на будущее)
+
+- Webhook вместо polling для Telegram-бота (нужен публичный HTTPS)
+- Хранение истории метрик в файле (сейчас только в памяти сессии, теряется при перезапуске)
+- Графики динамики за длительный период
+- Уведомления по email
+- Группировка серверов
