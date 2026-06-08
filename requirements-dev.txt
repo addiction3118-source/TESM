@@ -1,0 +1,10 @@
+# BlackArachnia — зависимости для разработки и тестов.
+# Установка:  pip install -r requirements-dev.txt
+#
+# Включает рантайм-зависимости + инструменты тестирования.
+# Сами тесты (tests/) импортируют только core.py и keys_store.py и из
+# сторонних пакетов требуют лишь cryptography — поэтому в CI достаточно
+# поставить pytest и cryptography (см. .github/workflows/tests.yml).
+
+-r requirements.txt
+pytest==9.0.3

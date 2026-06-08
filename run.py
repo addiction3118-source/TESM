@@ -63,14 +63,20 @@ def check_and_install():
         else:
             print(f"✓ {pip_name.split('>=')[0].split('[')[0]}")
 
-    # Устанавливаем только то чего нет
+    # Устанавливаем недостающее. Если есть requirements.txt — ставим из него
+    # (зафиксированные версии = воспроизводимая сборка), иначе по списку.
     if missing_pip:
-        print(f"\n📦 Устанавливаем: {', '.join(missing_pip)}")
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install"] + missing_pip +
-            ["--quiet", "--disable-pip-version-check"],
-            check=True
-        )
+        req = os.path.join(os.path.dirname(os.path.abspath(__file__)), "requirements.txt")
+        if os.path.exists(req):
+            print(f"\n📦 Устанавливаем версии из requirements.txt "
+                  f"(не хватало: {', '.join(missing_pip)})")
+            cmd = [sys.executable, "-m", "pip", "install", "-r", req,
+                   "--quiet", "--disable-pip-version-check"]
+        else:
+            print(f"\n📦 Устанавливаем: {', '.join(missing_pip)}")
+            cmd = ([sys.executable, "-m", "pip", "install"] + missing_pip +
+                   ["--quiet", "--disable-pip-version-check"])
+        subprocess.run(cmd, check=True)
         print("✅ Установка завершена\n")
     else:
         print("✅ Все зависимости установлены\n")

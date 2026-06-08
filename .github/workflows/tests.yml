@@ -1,0 +1,21 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Тесты импортируют только core.py и keys_store.py: из сторонних пакетов
+      # нужен лишь cryptography. Полный список рантайм-зависимостей — в
+      # requirements.txt (ставить не обязательно для прогона юнит-тестов).
+      - name: Install test deps
+        run: pip install pytest cryptography
+      - name: Run tests
+        run: pytest -q
