@@ -1,5 +1,5 @@
 import streamlit as st
-import time, re, json, os, urllib.request, urllib.error, socket, ssl
+import time, re, json, os, urllib.request, urllib.error
 import datetime as dt
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -17,10 +17,38 @@ def _load_dotenv():
 _load_dotenv()
 
 try:
-    from keys_store import save_keys, load_keys, keys_file_exists, delete_keys
+    from keys_store import save_keys, load_keys, keys_file_exists
     KEYS_STORE_AVAILABLE = True
 except ImportError:
     KEYS_STORE_AVAILABLE = False
+
+# Персистентность состояния (SQLite). Если модуль/БД недоступны — приложение
+# работает как раньше (всё в памяти), просто без сохранения между запусками.
+try:
+    import storage
+    storage.init_db()
+    STORAGE_AVAILABLE = True
+except Exception as _e:
+    STORAGE_AVAILABLE = False
+    print(f"[storage] init failed: {_e}")
+
+# Файловое логирование (различение причин сетевых ошибок).
+try:
+    from applog import get_logger
+    log = get_logger()
+except Exception:
+    import logging as _logging
+    log = _logging.getLogger("blackarachnia")  # тихий фоллбэк, если applog недоступен
+
+# Чистые функции (сеть/классификация/валидация) вынесены в core.py —
+# чтобы их можно было тестировать отдельно от Streamlit-UI.
+from core import (check_server, fetch_agent, exec_remote, classify,
+                  is_valid_hostname, fmt_uptime)
+
+# Единая точка настройки (пороги, модели, порты, таймауты, антиспам).
+import config
+# Команды служб/логов под ОС сервера (Linux/Windows).
+import platform_cmds
 
 st.set_page_config(page_title="BlackArachnia", page_icon="🕷️",
                    layout="wide", initial_sidebar_state="expanded")
@@ -30,40 +58,11 @@ st.set_page_config(page_title="BlackArachnia", page_icon="🕷️",
 # ═══════════════════════════════════════════════════════════════
 _DIR          = os.path.dirname(os.path.abspath(__file__))
 _JSON_PATH    = os.path.join(_DIR, "temp_servers.json")
-_SESSION_FILE = os.path.join(_DIR, ".ba_session")
 
-import hashlib, base64 as _b64
-
-def _machine_key():
-    import platform, getpass
-    return hashlib.sha256(f"{platform.node()}-{getpass.getuser()}".encode()).digest()
-
-def save_session(pwd):
-    try:
-        key = _machine_key()
-        xored = bytes(p ^ key[i % 32] for i, p in enumerate(pwd.encode()))
-        with open(_SESSION_FILE, "wb") as f:
-            f.write(_b64.b64encode(xored))
-    except Exception:
-        pass
-
-def load_session():
-    try:
-        if not os.path.exists(_SESSION_FILE):
-            return ""
-        key = _machine_key()
-        with open(_SESSION_FILE, "rb") as f:
-            xored = _b64.b64decode(f.read())
-        return bytes(p ^ key[i % 32] for i, p in enumerate(xored)).decode("utf-8")
-    except Exception:
-        return ""
-
-def clear_session():
-    try:
-        if os.path.exists(_SESSION_FILE):
-            os.remove(_SESSION_FILE)
-    except Exception:
-        pass
+# «Запомнить меня»: мастер-пароль хранится в ОС-хранилище (keyring) с TTL,
+# а не в обратимом XOR-файле. Логика вынесена в session_store.py.
+from session_store import (save_session, load_session, clear_session,
+                           has_session, available as session_available)
 
 # ═══════════════════════════════════════════════════════════════
 #  CSS — единая тёмная тема (GitHub Dark / Netdata)
@@ -322,9 +321,6 @@ hr { border-color:#2a1a3d!important; }
 .nd-bar-wrap { height:4px; background:#2a1a3d; border-radius:2px; overflow:hidden; margin-top:3px; }
 .nd-bar-fill { height:100%; border-radius:2px; box-shadow:0 0 8px currentColor; filter:brightness(1.1); }
 
-/* Sparkline */
-.spark-wrap { display:flex; align-items:flex-end; gap:1px; height:32px; }
-.spark-bar  { width:3px; border-radius:1px; min-height:1px; }
 
 /* Статус-dot */
 .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; }
@@ -500,18 +496,6 @@ def load_keys_from_env():
     return {"groq":os.getenv("GROQ_API_KEY",""),"gemini":os.getenv("GEMINI_API_KEY",""),
             "openai":os.getenv("OPENAI_API_KEY","")}
 
-def is_valid_hostname(h):
-    if not h or not h.strip(): return False,"Адрес не может быть пустым"
-    if not re.match(r"^[a-zA-Z0-9.\-]+$", h): return False,"Недопустимые символы"
-    if not re.search(r"\.", h): return False,"Неполный домен"
-    return True,""
-
-def fmt_uptime(s):
-    if s<60: return f"{int(s)}s"
-    if s<3600: return f"{int(s//60)}m {int(s%60)}s"
-    if s<86400: return f"{int(s//3600)}h {int((s%3600)//60)}m"
-    return f"{int(s//86400)}d {int((s%86400)//3600)}h"
-
 def add_log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     st.session_state.logs.append(f"[{ts}] {msg}")
@@ -519,10 +503,12 @@ def add_log(msg):
         st.session_state.logs = st.session_state.logs[-300:]
 
 def add_audit(server, cmd, rc):
-    st.session_state.audit_log.append({"ts":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "server":server,"cmd":cmd,"rc":rc})
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.audit_log.append({"ts":ts,"server":server,"cmd":cmd,"rc":rc})
     if len(st.session_state.audit_log) > 500:
         st.session_state.audit_log = st.session_state.audit_log[-500:]
+    if STORAGE_AVAILABLE:
+        storage.insert_audit(ts, server, cmd, rc)
 
 def _color(v):
     return "#3fb950" if v<60 else "#e3b341" if v<85 else "#f85149"
@@ -555,7 +541,7 @@ def tg_alert(key, server, severity, msg):
     if not st.session_state.get("tg_enabled"): return
     now  = time.time()
     last = st.session_state.tg_last_sent.get(key, 0)
-    cd   = st.session_state.get("tg_cooldown_min", 15) * 60
+    cd   = st.session_state.get("tg_cooldown_min", config.TG_COOLDOWN_MIN) * 60
     if now - last < cd: return
     ok, err = send_telegram(f"{server} — {msg}", severity)
     if ok:
@@ -566,19 +552,25 @@ def tg_alert(key, server, severity, msg):
 
 # ── Инциденты ─────────────────────────────────────────────────
 def check_thresholds(name, s):
-    th  = st.session_state.thresholds.get(name, {"cpu":85,"ram":90,"disk":90})
+    th  = st.session_state.thresholds.get(name, dict(config.DEFAULT_THRESHOLDS))
     inc = st.session_state.incidents
     def _open(key, sev, msg):
         for i in inc:
             if i["server"]==name and i["key"]==key and i["status"]=="open": return
-        inc.append({"id":len(inc)+1,"server":name,"key":key,"severity":sev,"msg":msg,
-            "opened":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"closed":None,"status":"open"})
+        opened = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_id = len(inc)+1
+        if STORAGE_AVAILABLE:
+            rid = storage.insert_incident(name, key, sev, msg, opened)
+            if rid: new_id = rid
+        inc.append({"id":new_id,"server":name,"key":key,"severity":sev,"msg":msg,
+            "opened":opened,"closed":None,"status":"open"})
         add_log(f"[incident] {sev.upper()} — {name}: {msg}")
         tg_alert(f"{name}_{key}", name, sev, msg)
     def _close(key):
         for i in inc:
             if i["server"]==name and i["key"]==key and i["status"]=="open":
                 i["status"]="closed"; i["closed"]=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if STORAGE_AVAILABLE: storage.update_incident(i["id"],"closed",i["closed"])
     if not s.get("online"):
         _open("offline","critical",f"Сервер недоступен: {s.get('message','')[:50]}"); return
     _close("offline")
@@ -592,8 +584,8 @@ def check_thresholds(name, s):
         if s["disk"]>=th["disk"]: _open("disk","critical" if s["disk"]>=95 else "warning",f"Disk {s['disk']:.0f}% ≥ {th['disk']}%")
         else: _close("disk")
     sd = s.get("ssl_days",999)
-    if sd<14: _open("ssl","critical",f"SSL истекает через {sd} дн.")
-    elif sd<30: _open("ssl","warning",f"SSL истекает через {sd} дн.")
+    if sd<config.SSL_CRIT_DAYS: _open("ssl","critical",f"SSL истекает через {sd} дн.")
+    elif sd<config.SSL_WARN_DAYS: _open("ssl","warning",f"SSL истекает через {sd} дн.")
     else: _close("ssl")
     if len(inc)>1000: st.session_state.incidents = inc[-1000:]
 
@@ -605,6 +597,8 @@ def push_uptime(name, online):
     d["checks"]+=1
     if online: d["up"]+=1
     h[today]=d
+    if STORAGE_AVAILABLE:
+        storage.upsert_uptime(name, today, d["checks"], d["up"])
 
 def get_uptime_pct(name, days=90):
     h = st.session_state.uptime_history.get(name, {})
@@ -634,6 +628,11 @@ def push_metrics(name, cpu, ram, disk=None):
     for k,v in [("cpu",cpu),("ram",ram),("disk",disk)]:
         if v is not None:
             h[k].append(round(v,1)); h[k]=h[k][-60:]
+    if STORAGE_AVAILABLE:
+        storage.insert_metric(name, time.time(),
+            round(cpu,1)  if cpu  is not None else None,
+            round(ram,1)  if ram  is not None else None,
+            round(disk,1) if disk is not None else None)
 
 def sparkline(values, color="#bf5fff", h=32):
     if not values: return '<span style="color:#6e7681;font-size:10px">—</span>'
@@ -681,52 +680,7 @@ def radial_gauge(pct, label, color, size=108):
         f'</svg><div class="gauge-label">{label}</div></div>'
     )
 
-# ── Проверка сервера ──────────────────────────────────────────
-def check_server(url):
-    host = url.replace("https://","").replace("http://","").split("/")[0]
-    hdr  = {"User-Agent":"Mozilla/5.0"}
-    for scheme in ("https","http"):
-        try:
-            r = urllib.request.urlopen(urllib.request.Request(f"{scheme}://{host}",headers=hdr), timeout=4)
-            ssl_days=0
-            if scheme=="https":
-                try:
-                    ctx=ssl.create_default_context()
-                    with socket.create_connection((host,443),timeout=2) as sk:
-                        with ctx.wrap_socket(sk,server_hostname=host) as ss:
-                            exp=datetime.strptime(ss.getpeercert()["notAfter"],"%b %d %H:%M:%S %Y %Z")
-                            ssl_days=(exp-datetime.now(dt.UTC).replace(tzinfo=None)).days
-                except Exception: pass
-            try: ip=socket.gethostbyname(host)
-            except Exception: ip="—"
-            return {"online":True,"status_code":r.getcode(),"ip":ip,"ssl_days":ssl_days,
-                    "message":"OK","last_seen":datetime.now().strftime("%H:%M:%S")}
-        except Exception: continue
-    try:
-        urllib.request.urlopen(urllib.request.Request(f"http://{host}",headers=hdr),timeout=4)
-    except Exception as e: err=str(e)
-    else: err="недоступен"
-    return {"online":False,"status_code":"—","ip":"—","ssl_days":0,"message":err,"last_seen":"—"}
-
-def fetch_agent(host, port=9999, path="/metrics"):
-    try:
-        req=urllib.request.Request(f"http://{host}:{port}{path}",headers={"User-Agent":"BA/3"})
-        with urllib.request.urlopen(req,timeout=2) as r:
-            return json.loads(r.read().decode())
-    except Exception: return {}
-
-def exec_remote(host, cmd, port=9999, token=""):
-    try:
-        payload=json.dumps({"cmd":cmd,"token":token}).encode()
-        req=urllib.request.Request(f"http://{host}:{port}/exec",data=payload,
-            headers={"Content-Type":"application/json"},method="POST")
-        with urllib.request.urlopen(req,timeout=35) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        try: return {"error":json.loads(e.read().decode()).get("error",str(e))}
-        except Exception: return {"error":f"HTTP {e.code}"}
-    except Exception as e: return {"error":str(e)}
-
+# ── Проверка сервера (check_server/fetch_agent/exec_remote → core.py) ──
 def _probe_server(name, url, port):
     """Чистая функция (не трогает st.session_state) — безопасна для потоков."""
     r = check_server(url)
@@ -740,6 +694,7 @@ def _probe_server(name, url, port):
         r["net_up"]=m.get("net_up_kbps"); r["net_down"]=m.get("net_down_kbps")
         r["cores"]=m.get("cpu_cores"); r["load"]=m.get("load_avg")
         r["server_uptime"]=m.get("uptime_sec")  # реальный аптайм сервера
+        r["os"]=m.get("os")                      # ОС сервера (для вкладки Службы/Логи)
     return name, r
 
 def refresh_servers():
@@ -748,7 +703,7 @@ def refresh_servers():
     items = list(st.session_state.servers_dict.items())
     if not items:
         return
-    ports = {n: st.session_state.agent_ports.get(n, 9999) for n, _ in items}
+    ports = {n: st.session_state.agent_ports.get(n, config.AGENT_DEFAULT_PORT) for n, _ in items}
     results = {}
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(items)))) as ex:
         for fut in [ex.submit(_probe_server, n, u, ports[n]) for n, u in items]:
@@ -762,10 +717,15 @@ def refresh_servers():
         if r is None:
             continue
         prev = st.session_state.server_cache.get(name, {})
+        was_online = prev.get("online")  # None = первая проверка
         if r["online"] and not prev.get("online"):
             st.session_state.uptime_start[name] = time.time()
+            if was_online is False:
+                log.info(f"{name} ({url}) снова ОНЛАЙН")
         if not r["online"]:
             st.session_state.uptime_start.pop(name, None)
+            if was_online or was_online is None:  # переход online→offline или первая проверка
+                log.warning(f"{name} ({url}) ОФЛАЙН — {r.get('reason','?')}: {r.get('message','')}")
         st.session_state.server_cache[name] = r
         push_metrics(name, r.get("cpu"), r.get("ram"), r.get("disk"))
         push_uptime(name, r["online"])
@@ -774,19 +734,6 @@ def refresh_servers():
 # ═══════════════════════════════════════════════════════════════
 #  LLM-РОУТЕР (с памятью диалога)
 # ═══════════════════════════════════════════════════════════════
-ROUTING = {
- "code":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),   # mixtral-8x7b снят в Groq
- "reasoning":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
- "long":("gemini","gemini-2.0-flash","Gemini Flash"),
- "general":("groq","llama-3.3-70b-versatile","Groq/Llama70B"),
-}
-
-def classify(p):
-    if len(p)>16000: return "long"
-    if re.search(r"\b(код|code|python|sql|bash|функци|class)\b",p,re.I): return "code"
-    if re.search(r"\b(почему|объясни|why|analyze|проанализир|сравни)\b",p,re.I): return "reasoning"
-    return "general"
-
 def build_context():
     cache=st.session_state.get("server_cache",{})
     if not cache: return ""
@@ -795,7 +742,7 @@ def build_context():
         url=st.session_state.servers_dict.get(name,"")
         if s["online"]:
             ci=f" CPU={s['cpu']:.0f}% RAM={s['ram']:.0f}% Disk={s.get('disk',0):.0f}%" if s.get("cpu") is not None else ""
-            w=" SSL ИСТЕКАЕТ!" if s.get("ssl_days",999)<30 else ""
+            w=" SSL ИСТЕКАЕТ!" if s.get("ssl_days",999)<config.SSL_WARN_DAYS else ""
             lines.append(f"- {name}({url}): ОНЛАЙН http={s['status_code']} ip={s['ip']} ssl={s['ssl_days']}д{w}{ci}")
         else:
             lines.append(f"- {name}({url}): ОФЛАЙН {s['message'][:40]}")
@@ -816,12 +763,12 @@ def _msgs(sys, prompt, history):
 def route_and_call(prompt, mode, use_history=True):
     keys=st.session_state.get("api_keys",{})
     if mode=="auto":
-        task=classify(prompt); provider,model,label=ROUTING[task]
+        task=classify(prompt); provider,model,label=config.ROUTING[task]
     else:
         provider=mode
-        if provider=="groq": task=classify(prompt); model=ROUTING.get(task,ROUTING["general"])[1]; label=f"Groq/{model[:14]}"
-        elif provider=="gemini": model,label,task="gemini-2.0-flash","Gemini Flash","general"
-        elif provider=="openai": model,label,task="gpt-4o-mini","GPT-4o mini","general"
+        if provider=="groq": task=classify(prompt); model=config.ROUTING.get(task,config.ROUTING["general"])[1]; label=f"Groq/{model[:14]}"
+        elif provider=="gemini": model,label,task=config.GEMINI_MODEL,config.GEMINI_LABEL,"general"
+        elif provider=="openai": model,label,task=config.OPENAI_MODEL,config.OPENAI_LABEL,"general"
         else: return {"error":f"Неизвестный провайдер {provider}"}
     key=keys.get(provider,"")
     if not key: return {"error":f"Ключ {provider.upper()} не задан"}
@@ -854,7 +801,7 @@ def route_and_call(prompt, mode, use_history=True):
 
 def build_report():
     now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    L=[f"# BlackArachnia Report",f"**{now}**",""]
+    L=["# BlackArachnia Report",f"**{now}**",""]
     for name,url in st.session_state.servers_dict.items():
         s=st.session_state.server_cache.get(name); upt=get_uptime_pct(name)
         L.append(f"## {name} — {url}")
@@ -897,7 +844,7 @@ if KEYS_STORE_AVAILABLE and not st.session_state.keys_unlocked:
         _,cc,_=st.columns([1,2,1])
         with cc:
             pwd=st.text_input("Ввод",type="password",key="unlock_pwd",placeholder="Пароль...")
-            remember=st.checkbox("Запомнить меня на этом устройстве",value=True,key="chk_remember")
+            remember=st.checkbox("Запомнить меня на этом устройстве",value=True,key="chk_remember") if session_available() else False
             if st.button("Войти",key="btn_unlock",use_container_width=True):
                 loaded=load_keys(pwd)
                 if loaded is not None:
@@ -906,7 +853,7 @@ if KEYS_STORE_AVAILABLE and not st.session_state.keys_unlocked:
                     if remember: save_session(pwd)
                     st.rerun()
                 else: st.error("Неверный пароль")
-            if st.button("Войти без ключей",key="btn_skip",use_container_width=True):
+            if config.ALLOW_SKIP_KEYS and st.button("Войти без ключей",key="btn_skip",use_container_width=True):
                 st.session_state.keys_unlocked=True; st.rerun()
         st.stop()
     else:
@@ -929,7 +876,7 @@ for k,v in [
     ("incidents",[]),("thresholds",{}),("monitoring_active",True),("lang","ru"),
     ("tg_token",os.getenv("TG_BOT_TOKEN","")),("tg_chat_id",os.getenv("TG_CHAT_ID","")),
     ("tg_enabled",bool(os.getenv("TG_BOT_TOKEN","") and os.getenv("TG_CHAT_ID",""))),
-    ("tg_cooldown_min",15),("tg_last_sent",{}),
+    ("tg_cooldown_min",config.TG_COOLDOWN_MIN),("tg_last_sent",{}),
     ("system_prompt","Ты — ассистент мониторинга серверов BlackArachnia. Помогай кратко и по делу."),
     ("term_snippets",[
         {"name":"Disk","cmd":"df -h"},{"name":"Memory","cmd":"free -h"},
@@ -939,6 +886,15 @@ for k,v in [
     ]),
 ]:
     if k not in st.session_state: st.session_state[k]=v
+
+# Загрузка сохранённого состояния из SQLite (один раз на сессию).
+# Перезаписывает пустые дефолты выше данными из БД.
+if STORAGE_AVAILABLE and "storage_loaded" not in st.session_state:
+    st.session_state.incidents       = storage.load_incidents()
+    st.session_state.metrics_history = storage.load_metrics_history()
+    st.session_state.uptime_history  = storage.load_uptime_history()
+    st.session_state.audit_log       = storage.load_audit()
+    st.session_state.storage_loaded  = True
 
 # ═══════════════════════════════════════════════════════════════
 #  SIDEBAR
@@ -1019,7 +975,7 @@ with st.sidebar:
     _sb_label(T("sysprompt"),top=True)
     st.session_state.system_prompt=st.text_area("Текст",value=st.session_state.system_prompt,height=60,label_visibility="collapsed")
 
-    if os.path.exists(_SESSION_FILE):
+    if has_session():
         _sb_label(T("session"),top=True)
         if st.button(T("forget"),key="btn_forget",use_container_width=True):
             clear_session(); st.success("Сессия удалена")
@@ -1137,7 +1093,7 @@ def render_overview():
     m2.metric(T("uptime"),fmt_uptime(up) if s["online"] else "—",
               delta=None if up_real else "с запуска")
     m3.metric(T("http"),str(s["status_code"]))
-    m4.metric(T("ssl"),f"{s['ssl_days']}d" if s["online"] else "—",delta="⚠ скоро" if s.get("ssl_days",999)<30 else None)
+    m4.metric(T("ssl"),f"{s['ssl_days']}d" if s["online"] else "—",delta="⚠ скоро" if s.get("ssl_days",999)<config.SSL_WARN_DAYS else None)
     m5.metric(T("uptime90"),f"{upt:.1f}%" if upt is not None else "—")
 
     st.markdown("<div style='height:8px'></div>",unsafe_allow_html=True)
@@ -1201,7 +1157,7 @@ with tab_svc:
     st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
     tok=st.session_state.agent_token
     host=server_url.replace("https://","").replace("http://","").split("/")[0]
-    port=st.session_state.agent_ports.get(env_choice,9999)
+    port=st.session_state.agent_ports.get(env_choice,config.AGENT_DEFAULT_PORT)
 
     # Топ процессов (фишка Netdata)
     st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("top_proc")}</div>',unsafe_allow_html=True)
@@ -1215,11 +1171,22 @@ with tab_svc:
         st.dataframe(rows,hide_index=True,width="stretch",
             column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["PID","Процесс","CPU %","RAM %"]})
 
-    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">{T("svc_title")}</div>',unsafe_allow_html=True)
+    # ── ОС сервера: автоопределение из агента + ручной override ──
+    srv_os   = st.session_state.server_cache.get(env_choice, {}).get("os")
+    detected = platform_cmds.os_kind(srv_os)
+    osc1,osc2=st.columns([1,3])
+    with osc1: st.markdown('<div style="font-size:11px;color:#8b949e;padding-top:8px">ОС сервера:</div>',unsafe_allow_html=True)
+    with osc2:
+        os_sel=st.radio("ОС",["auto","linux","windows"],horizontal=True,key="svc_os_sel",label_visibility="collapsed")
+    kind = detected if os_sel=="auto" else os_sel
+    if kind=="unknown": kind="linux"   # нет агента → команды по умолчанию Linux
+    _det_txt={"linux":"Linux","windows":"Windows","unknown":"не определена"}[detected]
+
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:10px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">СЛУЖБЫ · режим {kind.upper()} <span style="color:#3d2459">(агент: {_det_txt})</span></div>',unsafe_allow_html=True)
     cf,cc=st.columns([2,3])
     with cf:
         if st.button(T("svc_refresh"),key="btn_svc"):
-            res=exec_remote(host,"systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1,$4}' | head -30",port,tok)
+            res=exec_remote(host,platform_cmds.list_services_cmd(kind),port,tok)
             if res.get("error"): st.session_state["svc_err"]=res["error"]
             else:
                 svcs=[]
@@ -1229,16 +1196,17 @@ with tab_svc:
                         svcs.append({"name":pp[0].replace(".service",""),"sub":pp[1] if len(pp)>1 else "?"})
                 st.session_state["svc_list"]=svcs; st.session_state.pop("svc_err",None)
     with cc:
-        custom=st.text_input("Ввод",placeholder="nginx, docker, postgresql...",key="custom_svc",label_visibility="collapsed")
+        _svc_ph="nginx, docker, postgresql..." if kind=="linux" else "Spooler, W3SVC, MSSQLSERVER..."
+        custom=st.text_input("Ввод",placeholder=_svc_ph,key="custom_svc",label_visibility="collapsed")
     if st.session_state.get("svc_err"): st.error(st.session_state["svc_err"])
 
     def _svc(action,svc):
-        cmd=f"sudo systemctl {action} {svc}.service 2>&1; systemctl is-active {svc}.service"
+        cmd=platform_cmds.service_action_cmd(kind,action,svc)
         with st.spinner(f"{action} {svc}..."):
             res=exec_remote(host,cmd,port,tok)
         out=res.get("stdout","").strip() if not res.get("error") else res["error"]
         st.session_state[f"svcres_{svc}"]=f"{action}: {out}"
-        add_audit(env_choice,cmd,res.get("returncode",-1)); add_log(f"[service] {action} {svc}")
+        add_audit(env_choice,cmd,res.get("returncode",-1)); add_log(f"[service] {action} {svc} ({kind})")
 
     if custom:
         st.markdown(f'<div style="font-size:11px;color:#8b949e;margin:8px 0 4px">Управление: <b style="color:#e6edf3">{custom}</b></div>',unsafe_allow_html=True)
@@ -1248,12 +1216,12 @@ with tab_svc:
         if b3.button("↺ Restart",key="srs"): _svc("restart",custom); st.rerun()
         if b4.button("⟳ Reload",key="srl"): _svc("reload",custom); st.rerun()
         if b5.button("📋 Status",key="sss"):
-            res=exec_remote(host,f"systemctl status {custom}.service --no-pager -l 2>&1",port,tok)
+            res=exec_remote(host,platform_cmds.service_status_cmd(kind,custom),port,tok)
             st.session_state[f"svcres_{custom}"]=res.get("stdout","") or res.get("error",""); st.rerun()
         rk=f"svcres_{custom}"
         if rk in st.session_state:
             out=st.session_state[rk]
-            col="#3fb950" if "active" in out else "#f85149" if "failed" in out.lower() else "#e6edf3"
+            col="#3fb950" if ("active" in out or "Running" in out) else "#f85149" if "failed" in out.lower() else "#e6edf3"
             st.markdown(f'<pre style="background:#0a0612;border:1px solid #2a1a3d;border-radius:6px;padding:10px;font-size:12px;color:{col};white-space:pre-wrap;max-height:200px;overflow-y:auto">{out}</pre>',unsafe_allow_html=True)
 
     if st.session_state.get("svc_list"):
@@ -1265,17 +1233,17 @@ with tab_svc:
             if c3.button("⏹",key=f"qx_{svc['name']}"): _svc("stop",svc["name"]); st.rerun()
             if c4.button("↺",key=f"qr_{svc['name']}"): _svc("restart",svc["name"]); st.rerun()
 
-    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">{T("log_stream")}</div>',unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin:14px 0 8px;border-top:1px solid #2a1a3d;padding-top:12px">{T("log_stream")} · {kind.upper()}</div>',unsafe_allow_html=True)
     l1,l2,l3=st.columns([3,1,1])
-    with l1: logsrc=st.text_input("Ввод",value="/var/log/syslog",key="logsrc",label_visibility="collapsed")
+    with l1: logsrc=st.text_input("Ввод",value=platform_cmds.default_log_source(kind),key=f"logsrc_{kind}",label_visibility="collapsed")
     with l2: loglines=st.number_input("Строк",10,500,50,10,key="loglines")
     with l3: getlog=st.button(T("log_get"),key="btn_log",use_container_width=True)
     if getlog:
-        res=exec_remote(host,f"tail -n {loglines} {logsrc} 2>&1",port,tok)
+        res=exec_remote(host,platform_cmds.fetch_log_cmd(kind,logsrc,loglines),port,tok)
         if res.get("error"): st.error(res["error"])
         else:
             out=res.get("stdout","").strip()
-            add_log(f"[log] tail {loglines} {logsrc}")
+            add_log(f"[log] {kind} {loglines} {logsrc}")
             st.markdown(f'<pre style="background:#0a0612;border:1px solid #2a1a3d;border-radius:8px;padding:14px;font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:400px;overflow-y:auto">{out or "(пусто)"}</pre>',unsafe_allow_html=True)
     st.markdown("</div>",unsafe_allow_html=True)
 
@@ -1286,7 +1254,7 @@ with tab_term:
     st.markdown("<div style='padding:16px 20px 0'>",unsafe_allow_html=True)
     tok=st.session_state.agent_token
     host=server_url.replace("https://","").replace("http://","").split("/")[0]
-    port=st.session_state.agent_ports.get(env_choice,9999)
+    port=st.session_state.agent_ports.get(env_choice,config.AGENT_DEFAULT_PORT)
     prefill=st.session_state.pop("term_prefill","")
     tc,tsn,tau=st.tabs([T("console"),T("snippets"),T("audit")])
 
@@ -1353,7 +1321,9 @@ with tab_term:
             a1,a2=st.columns([1,1])
             tsv="\n".join(["Time\tServer\tCmd\tRC"]+[f"{a['ts']}\t{a['server']}\t{a['cmd']}\t{a['rc']}" for a in reversed(st.session_state.audit_log)])
             a1.download_button("💾 .tsv",data=tsv.encode(),file_name=f"audit_{datetime.now().strftime('%Y%m%d')}.tsv",mime="text/tab-separated-values",key="dl_audit",use_container_width=True)
-            if a2.button(T("clear"),key="clr_audit",use_container_width=True): st.session_state.audit_log=[]; st.rerun()
+            if a2.button(T("clear"),key="clr_audit",use_container_width=True):
+                if STORAGE_AVAILABLE: storage.clear_audit()
+                st.session_state.audit_log=[]; st.rerun()
             rows=[{"Время":a["ts"],"Сервер":a["server"],"Команда":a["cmd"][:50],"RC":str(a["rc"]),"OK":"✅" if a["rc"]==0 else "❌"} for a in reversed(st.session_state.audit_log[-100:])]
             st.dataframe(rows,hide_index=True,width="stretch",column_config={c:st.column_config.TextColumn(c,disabled=True) for c in ["Время","Сервер","Команда","RC","OK"]})
     st.markdown("</div>",unsafe_allow_html=True)
@@ -1421,7 +1391,7 @@ with tab_inc:
     with st.expander(T("thresholds")):
         st.caption("Инцидент создаётся автоматически при превышении")
         for sn in st.session_state.servers_dict:
-            th=st.session_state.thresholds.get(sn,{"cpu":85,"ram":90,"disk":90})
+            th=st.session_state.thresholds.get(sn,dict(config.DEFAULT_THRESHOLDS))
             st.markdown(f'<div style="font-size:11px;color:#e6edf3;margin:6px 0 2px">{sn}</div>',unsafe_allow_html=True)
             t1,t2,t3=st.columns(3)
             th["cpu"]=t1.number_input("CPU %",50,100,th["cpu"],key=f"th_c_{sn}")
@@ -1440,6 +1410,7 @@ with tab_inc:
     fs=f1.selectbox("Выбор",["all","open","closed"],format_func=lambda x:{"all":"Все","open":"Открытые","closed":"Закрытые"}[x],key="if_s",label_visibility="collapsed")
     fv=f2.selectbox("Выбор",["all","critical","warning"],format_func=lambda x:{"all":"Все","critical":"Критичные","warning":"Warning"}[x],key="if_v",label_visibility="collapsed")
     if f3.button(T("clear_closed"),key="clr_closed",use_container_width=True):
+        if STORAGE_AVAILABLE: storage.delete_closed_incidents()
         st.session_state.incidents=[i for i in alli if i["status"]!="closed"]; st.rerun()
     flt=[i for i in reversed(alli) if (fs=="all" or i["status"]==fs) and (fv=="all" or i["severity"]==fv)]
     if not flt: st.markdown(f'<div style="text-align:center;padding:30px;font-size:12px;color:#6e7681">{T("no_inc")}</div>',unsafe_allow_html=True)
@@ -1451,6 +1422,7 @@ with tab_inc:
             if inc["status"]=="open":
                 if st.button(f"{T('resolve')} #{inc['id']}",key=f"res_{inc['id']}"):
                     inc["status"]="closed"; inc["closed"]=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if STORAGE_AVAILABLE: storage.update_incident(inc["id"],"closed",inc["closed"])
                     add_log(f"[incident] закрыт #{inc['id']}"); st.rerun()
     st.markdown("</div>",unsafe_allow_html=True)
 
@@ -1492,12 +1464,13 @@ ExecStart=/usr/bin/python3 /home/user/agent.py --token SECRET
 Restart=always
 [Install]
 WantedBy=multi-user.target""",language="ini")
+    st.markdown('<div style="background:#2d0f0f;border:1px solid #5a2020;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:12px;color:#ff9b94;line-height:1.6">🔒 <b>Безопасность:</b> агент работает по обычному HTTP — в недоверенной сети не выставляйте порт наружу. Заверните трафик в SSH-туннель (<code style="color:#ffd0cc">ssh -L 9999:localhost:9999 user@server</code>), WireGuard или TLS-reverse-proxy. Подробнее — SECURITY.md.</div>',unsafe_allow_html=True)
     st.markdown("---")
     st.markdown(f'<div style="font-size:10px;color:#6e7681;letter-spacing:0.08em;margin-bottom:8px">{T("srv_name").upper()}</div>',unsafe_allow_html=True)
     n1,n2,n3=st.columns([2,2,1])
     with n1: nn=st.text_input(T("srv_name"),placeholder="PROD",key="add_name")
     with n2: nh=st.text_input(T("srv_host"),placeholder="server.com",key="add_host")
-    with n3: np=st.number_input(T("agent_port"),1,65535,9999,key="add_port")
+    with n3: np=st.number_input(T("agent_port"),1,65535,config.AGENT_DEFAULT_PORT,key="add_port")
     b1,b2,_=st.columns([1,1,2])
     dt_test=b1.button(T("test_agent"),key="btn_test",use_container_width=True)
     dt_add=b2.button(T("add_server"),key="btn_add",use_container_width=True)
@@ -1520,7 +1493,7 @@ WantedBy=multi-user.target""",language="ini")
             ok,err=is_valid_hostname(h)
             if ok:
                 st.session_state.servers_dict[n]=h
-                if int(np)!=9999: st.session_state.agent_ports[n]=int(np)
+                if int(np)!=config.AGENT_DEFAULT_PORT: st.session_state.agent_ports[n]=int(np)
                 # Сохраняем для Telegram-бота и между сессиями
                 try:
                     with open(_JSON_PATH,"w",encoding="utf-8") as f:
@@ -1536,7 +1509,7 @@ WantedBy=multi-user.target""",language="ini")
     rows=[]
     for sn,sh in st.session_state.servers_dict.items():
         sc=st.session_state.server_cache.get(sn)
-        rows.append({"Имя":sn,"Хост":sh,"Порт":str(st.session_state.agent_ports.get(sn,9999)),
+        rows.append({"Имя":sn,"Хост":sh,"Порт":str(st.session_state.agent_ports.get(sn,config.AGENT_DEFAULT_PORT)),
             "Статус":"Online" if sc and sc.get("online") else "Offline" if sc else "Pending",
             "CPU":f"{sc['cpu']:.0f}%" if sc and sc.get("cpu") is not None else "—",
             "RAM":f"{sc['ram']:.0f}%" if sc and sc.get("ram") is not None else "—"})

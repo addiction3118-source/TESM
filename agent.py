@@ -9,8 +9,16 @@
 # Установка:  pip install psutil
 # Запуск:     python agent.py --token YOUR_SECRET
 # Фон:        nohup python agent.py --token SECRET &
+#
+# БЕЗОПАСНОСТЬ: агент отдаёт данные по обычному HTTP — токен /exec и вывод
+# команд идут по сети в открытом виде. В недоверенной сети (интернет) НЕ
+# выставляйте порт 9999 наружу. Заверните трафик в защищённый канал:
+#   • SSH-туннель:  ssh -L 9999:localhost:9999 user@server   (агент слушает localhost)
+#   • WireGuard / VPN между панелью и сервером
+#   • nginx/Caddy как TLS-reverse-proxy перед агентом
+# Подробнее — см. SECURITY.md.
 # ─────────────────────────────────────────────────────────────
-import json, sys, os, time, subprocess, hmac, psutil
+import json, sys, os, time, subprocess, hmac, platform, psutil
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 PORT  = 9999
@@ -72,6 +80,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 "net_down_kbps": down_kbps,
                 "uptime_sec":    int(time.time() - _BOOT),
                 "load_avg":      list(os.getloadavg()) if hasattr(os, "getloadavg") else [0, 0, 0],
+                "os":            platform.system(),   # Windows / Linux / Darwin — для выбора команд служб/логов
             })
         elif self.path == "/processes":
             procs = []

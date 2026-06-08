@@ -4,6 +4,13 @@
 .session
 .agent_ports.json
 temp_servers.json
+blackarachnia.db
+*.db
+*.db-wal
+*.db-shm
+blackarachnia.log
+*.log
+*.log.*
 __pycache__/
 *.pyc
 .env.example

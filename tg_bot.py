@@ -16,6 +16,8 @@ import os, json, time, urllib.request, urllib.error, socket, ssl
 import datetime as dt
 from datetime import datetime
 
+import config
+
 _DIR       = os.path.dirname(os.path.abspath(__file__))
 _JSON_PATH = os.path.join(_DIR, "temp_servers.json")
 _PORTS     = os.path.join(_DIR, ".agent_ports.json")
@@ -73,7 +75,7 @@ def check_server(url):
             continue
     return {"online": False, "code": "—", "ssl_days": 0, "host": host}
 
-def fetch_agent(host, port=9999, path="/metrics"):
+def fetch_agent(host, port=config.AGENT_DEFAULT_PORT, path="/metrics"):
     try:
         req = urllib.request.Request(f"http://{host}:{port}{path}",
                                      headers={"User-Agent": "BA-bot"})
@@ -108,12 +110,12 @@ def cmd_status():
     for name, url in servers.items():
         s = check_server(url)
         if s["online"]:
-            m = fetch_agent(s["host"], ports.get(name, 9999))
+            m = fetch_agent(s["host"], ports.get(name, config.AGENT_DEFAULT_PORT))
             if m:
                 ci = f" · CPU {m.get('cpu_percent',0):.0f}% · RAM {m.get('ram_percent',0):.0f}%"
             else:
                 ci = " · агент офлайн"
-            ssl_w = f" ⚠️SSL {s['ssl_days']}д" if s["ssl_days"] < 30 else ""
+            ssl_w = f" ⚠️SSL {s['ssl_days']}д" if s["ssl_days"] < config.SSL_WARN_DAYS else ""
             lines.append(f"🟢 {name} — онлайн{ci}{ssl_w}")
         else:
             lines.append(f"🔴 {name} — ОФЛАЙН")
@@ -134,7 +136,7 @@ def cmd_metrics(arg):
     s = check_server(servers[match])
     if not s["online"]:
         return f"🔴 {match} — офлайн"
-    m = fetch_agent(s["host"], ports.get(match, 9999))
+    m = fetch_agent(s["host"], ports.get(match, config.AGENT_DEFAULT_PORT))
     if not m:
         return f"🟢 {match} онлайн, но агент не отвечает (CPU/RAM недоступны)"
     up_h = m.get("uptime_sec", 0) // 3600
@@ -158,17 +160,18 @@ def cmd_incidents():
         if not s["online"]:
             issues.append(f"🔴 {name}: сервер недоступен")
             continue
-        if s["ssl_days"] < 14:
+        if s["ssl_days"] < config.SSL_CRIT_DAYS:
             issues.append(f"🔴 {name}: SSL истекает через {s['ssl_days']} дн.")
-        elif s["ssl_days"] < 30:
+        elif s["ssl_days"] < config.SSL_WARN_DAYS:
             issues.append(f"🟡 {name}: SSL истекает через {s['ssl_days']} дн.")
-        m = fetch_agent(s["host"], ports.get(name, 9999))
+        m = fetch_agent(s["host"], ports.get(name, config.AGENT_DEFAULT_PORT))
         if m:
-            if m.get("cpu_percent", 0) >= 85:
+            th = config.DEFAULT_THRESHOLDS
+            if m.get("cpu_percent", 0) >= th["cpu"]:
                 issues.append(f"🟡 {name}: CPU {m['cpu_percent']:.0f}%")
-            if m.get("ram_percent", 0) >= 90:
+            if m.get("ram_percent", 0) >= th["ram"]:
                 issues.append(f"🟡 {name}: RAM {m['ram_percent']:.0f}%")
-            if m.get("disk_percent", 0) >= 90:
+            if m.get("disk_percent", 0) >= th["disk"]:
                 issues.append(f"🟡 {name}: Disk {m['disk_percent']:.0f}%")
     if not issues:
         return "✅ Активных инцидентов нет"
@@ -187,7 +190,7 @@ def cmd_ai(arg):
     for name, url in servers.items():
         s = check_server(url)
         if s["online"]:
-            m = fetch_agent(s["host"], ports.get(name, 9999))
+            m = fetch_agent(s["host"], ports.get(name, config.AGENT_DEFAULT_PORT))
             ci = f" CPU={m.get('cpu_percent',0):.0f}% RAM={m.get('ram_percent',0):.0f}%" if m else ""
             ctx.append(f"- {name}: онлайн ssl={s['ssl_days']}д{ci}")
         else:
