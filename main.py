@@ -1,8 +1,6 @@
 import os
 import re
 import json
-import socket
-from datetime import datetime
 
 
 def is_valid_hostname(hostname: str) -> bool:
