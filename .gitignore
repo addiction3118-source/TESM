@@ -14,3 +14,4 @@ blackarachnia.log
 __pycache__/
 *.pyc
 .env.example
+claude
